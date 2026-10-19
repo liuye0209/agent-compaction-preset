@@ -1,0 +1,9 @@
+{
+  "name": "agent-compaction-preset",
+  "version": "0.1.0",
+  "description": "Cross-agent context compaction configuration preset",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test" },
+  "license": "MIT"
+}

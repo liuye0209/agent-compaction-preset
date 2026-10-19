@@ -1,0 +1,5 @@
+node_modules/
+coverage/
+*.bak-agent-compact-*
+*.tmp-agent-compact-*
+.DS_Store
