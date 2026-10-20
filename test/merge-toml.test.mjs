@@ -111,16 +111,65 @@ test('treats # inside quoted values as data, not a comment', () => {
   );
 });
 
-test('refuses to guess when a top-level multiline string is open', () => {
-  const basic = 'name = """\nmodel_context_window = 1\n"""\n\n[profiles.small]\nmodel_context_window = 64000\n';
-  assert.throws(
-    () => mergeTopLevelToml(basic, { model_context_window: 200000 }),
-    /Ambiguous TOML.*multiline/i,
+test('preserves closed multiline strings and aborts when they are unclosed', () => {
+  const basic = [
+    'name = """',
+    'model_context_window = 1',
+    '"""',
+    '',
+    '[profiles.small]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  assert.equal(
+    mergeTopLevelToml(basic, { model_context_window: 200000 }),
+    [
+      'name = """',
+      'model_context_window = 1',
+      '"""',
+      '',
+      'model_context_window = 200000',
+      '[profiles.small]',
+      'model_context_window = 64000',
+      '',
+    ].join('\n'),
   );
 
-  const literal = "name = '''\nmodel_context_window = 1\n'''\n\n[profiles.small]\nmodel_context_window = 64000\n";
+  const literal = [
+    "name = '''",
+    'model_context_window = 1',
+    "'''",
+    '',
+    '[profiles.small]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  assert.equal(
+    mergeTopLevelToml(literal, { model_context_window: 200000 }),
+    [
+      "name = '''",
+      'model_context_window = 1',
+      "'''",
+      '',
+      'model_context_window = 200000',
+      '[profiles.small]',
+      'model_context_window = 64000',
+      '',
+    ].join('\n'),
+  );
+
   assert.throws(
-    () => mergeTopLevelToml(literal, { model_context_window: 200000 }),
+    () =>
+      mergeTopLevelToml('name = """\nmodel_context_window = 1\n', {
+        model_context_window: 200000,
+      }),
+    /Ambiguous TOML.*multiline/i,
+  );
+  assert.throws(
+    () =>
+      mergeTopLevelToml("name = '''\nmodel_context_window = 1\n", {
+        model_context_window: 200000,
+      }),
     /Ambiguous TOML.*multiline/i,
   );
 });
@@ -150,4 +199,176 @@ test('findKeysInTables ignores top-level keys and reports table line numbers', (
     { table: 'servers', key: 'model_context_window', line: 5 },
   ]);
   assert.deepEqual(findKeysInTables('model_context_window = 1\n', ['model_context_window']), []);
+});
+
+test('inserts missing keys after a top-level array, not inside it', () => {
+  const text = [
+    'notify = [',
+    '  [1, 2],',
+    '  [3, 4]',
+    ']',
+    '[profiles.small]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  const output = mergeTopLevelToml(text, { model_context_window: 200000 });
+  assert.equal(
+    output,
+    [
+      'notify = [',
+      '  [1, 2],',
+      '  [3, 4]',
+      ']',
+      'model_context_window = 200000',
+      '[profiles.small]',
+      'model_context_window = 64000',
+      '',
+    ].join('\n'),
+  );
+  assert.doesNotMatch(output, /\[1, 2\],\n\s*model_context_window/);
+});
+
+test('preserves multiline string contents and inserts target keys outside them', () => {
+  const text = [
+    '"description" = """',
+    'model_context_window = 100000',
+    '"""',
+    '',
+    '[profiles.small]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  const output = mergeTopLevelToml(text, { model_context_window: 200000 });
+  assert.equal(
+    output,
+    [
+      '"description" = """',
+      'model_context_window = 100000',
+      '"""',
+      '',
+      'model_context_window = 200000',
+      '[profiles.small]',
+      'model_context_window = 64000',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('preserves arrays of multiline strings while inserting missing keys', () => {
+  const text = [
+    'notes = [',
+    '  """',
+    '  model_context_window = 1',
+    '  """,',
+    "  '''",
+    '  [profiles.fake]',
+    '  model_context_window = 2',
+    "  '''",
+    ']',
+    '',
+    '[profiles.small]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  const output = mergeTopLevelToml(text, { model_context_window: 200000 });
+  assert.equal(
+    output,
+    [
+      'notes = [',
+      '  """',
+      '  model_context_window = 1',
+      '  """,',
+      "  '''",
+      '  [profiles.fake]',
+      '  model_context_window = 2',
+      "  '''",
+      ']',
+      '',
+      'model_context_window = 200000',
+      '[profiles.small]',
+      'model_context_window = 64000',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('reads only real top-level values, ignoring arrays and multiline strings', () => {
+  const text = [
+    'notes = [',
+    '  """',
+    '  model_context_window = 1',
+    '  """,',
+    '  [3, 4],',
+    ']',
+    'description = """',
+    'model_auto_compact_token_limit = 2',
+    '"""',
+    'model_context_window = 100000 # real',
+    '',
+    '[profiles.small]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  assert.deepEqual(
+    readTopLevelTomlValues(text, [
+      'model_context_window',
+      'model_auto_compact_token_limit',
+    ]),
+    { model_context_window: '100000', model_auto_compact_token_limit: undefined },
+  );
+});
+
+test('findKeysInTables ignores array elements and table-like multiline text', () => {
+  const text = [
+    'notify = [',
+    '  [3, 4],',
+    ']',
+    'description = """',
+    '[profiles.fake]',
+    'model_context_window = 777',
+    '"""',
+    '[profiles.real]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  assert.deepEqual(findKeysInTables(text, ['model_context_window']), [
+    { table: 'profiles.real', key: 'model_context_window', line: 9 },
+  ]);
+});
+
+test('updates quoted target keys without duplicating them', () => {
+  const text = '"model_context_window" = 100000 # old\n';
+  const output = mergeTopLevelToml(text, { model_context_window: 200000 });
+  assert.equal(output, '"model_context_window" = 200000 # old\n');
+  assert.equal((output.match(/model_context_window/g) ?? []).length, 1);
+  assert.deepEqual(readTopLevelTomlValues(text, ['model_context_window']), {
+    model_context_window: '100000',
+  });
+});
+
+test('aborts on an unclosed top-level array', () => {
+  assert.throws(
+    () =>
+      mergeTopLevelToml('notify = [\n  [1, 2],\n', {
+        model_context_window: 200000,
+      }),
+    /Ambiguous TOML.*array/i,
+  );
+});
+
+test('aborts instead of rewriting a multiline target value', () => {
+  assert.throws(
+    () =>
+      mergeTopLevelToml('model_context_window = """\n100000\n"""\n', {
+        model_context_window: 200000,
+      }),
+    /Ambiguous TOML.*multiline/i,
+  );
+  assert.throws(
+    () =>
+      mergeTopLevelToml('model_context_window = [\n  100000,\n]\n', {
+        model_context_window: 200000,
+      }),
+    /Ambiguous TOML.*array/i,
+  );
 });
