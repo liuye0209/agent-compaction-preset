@@ -426,3 +426,81 @@ test('keeps a leading comment when appending to a comment-only document', () => 
   assert.match(output, /^# preamble$/m);
   assert.match(output, /^- id: compaction-basic$/m);
 });
+
+test('rejects an indentless sequence after config', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '  - auto: true',
+    '',
+  ].join('\n');
+
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    /unexpected structure/i,
+  );
+  assert.throws(() => readDshCompactionConfig(input), /unexpected structure/i);
+});
+
+test('rejects over-indented continuation keys instead of adding a config block', () => {
+  const input = [
+    '- id: compaction-basic',
+    "    name: '@deepseek-ai/dsh-compaction-basic'",
+    '    config:',
+    '      auto: false',
+    '',
+  ].join('\n');
+
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    /unexpected structure/i,
+  );
+  assert.throws(() => readDshCompactionConfig(input), /unexpected structure/i);
+});
+
+test('inserts missing keys after a block scalar whose last line starts with #', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: |',
+    '      hello',
+    '      # literal last line',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+  const lines = output.split('\n');
+  const scalarLine = lines.indexOf('    custom: |');
+  const literalLine = lines.indexOf('      # literal last line');
+  const firstInserted = lines.findIndex((line) => line.startsWith('    auto: '));
+
+  assert.notEqual(scalarLine, -1);
+  assert.notEqual(literalLine, -1);
+  assert.notEqual(firstInserted, -1);
+  assert.ok(scalarLine < literalLine);
+  assert.ok(literalLine < firstInserted);
+  assert.match(
+    output,
+    /custom: \|\n      hello\n      # literal last line\n    auto: true\n/,
+  );
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('rejects quoted entry keys instead of appending a second block', () => {
+  const starts = [
+    ['- "id": compaction-basic', ''],
+    ["- 'name': '@deepseek-ai/dsh-compaction-basic'", ''],
+    ['- id: compaction-basic', '  "config":', '    auto: false', ''],
+  ];
+
+  for (const lines of starts) {
+    const input = lines.join('\n');
+    assert.throws(
+      () => mergeDshCompactionBlock(input, config),
+      /unexpected structure/i,
+    );
+    assert.throws(
+      () => readDshCompactionConfig(input),
+      /unexpected structure/i,
+    );
+  }
+});

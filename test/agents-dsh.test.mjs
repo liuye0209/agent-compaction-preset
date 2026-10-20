@@ -389,6 +389,21 @@ const manualStructures = [
   ['an empty flow mapping root', ['{}', '']],
   ['a nonempty flow sequence root', ['[1, 2]', '']],
   ['a scalar root', ['just-a-scalar', '']],
+  [
+    'an indentless sequence after config',
+    ['- id: compaction-basic', '  config:', '  - auto: true', ''],
+  ],
+  [
+    'over-indented continuation keys',
+    [
+      '- id: compaction-basic',
+      "    name: '@deepseek-ai/dsh-compaction-basic'",
+      '    config:',
+      '      auto: false',
+      '',
+    ],
+  ],
+  ['a quoted entry key', ['- "id": compaction-basic', '']],
 ];
 
 for (const [name, lines] of manualStructures) {
