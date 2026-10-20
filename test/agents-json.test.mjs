@@ -91,15 +91,44 @@ test('Claude Code detect reads the config and parses the CLI version', (t) => {
   ]);
 });
 
-test('Claude Code unknown version writes only the boolean and warns', (t) => {
+test('Claude Code unknown version writes both keys and reports 190000', (t) => {
   const home = tempHome(t);
   writeHomeFile(home, claudePath, '{}\n');
   const plan = claude.plan(missingCliCtx(home), policy);
   const parsed = JSON.parse(plan.nextContent);
   assert.equal(parsed.autoCompactEnabled, true);
-  assert.equal(parsed.autoCompactWindow, undefined);
-  assert.equal(plan.effective.trigger, null);
+  assert.equal(parsed.autoCompactWindow, 190000);
+  assert.deepEqual(plan.effective, { trigger: 190000, keep: null });
+  assert.match(plan.warnings.join(' '), /could not determine/i);
   assert.match(plan.warnings.join(' '), /2\.1\.288/);
+});
+
+test('Claude Code unknown version still enforces the 100K minimum', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, '{}\n');
+  assert.throws(
+    () => claude.plan(
+      missingCliCtx(home),
+      resolvePolicy({ context: 100000, trigger: 95000, keep: 50000 }),
+    ),
+    /100000/,
+  );
+});
+
+test('Claude Code treats a throwing version probe as unknown', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, '{}\n');
+  const ctx = makeCtx(home, {
+    runCommand: () => {
+      throw new Error('spawn failed');
+    },
+  });
+  const plan = claude.plan(ctx, policy);
+  const parsed = JSON.parse(plan.nextContent);
+  assert.equal(parsed.autoCompactEnabled, true);
+  assert.equal(parsed.autoCompactWindow, 190000);
+  assert.deepEqual(plan.effective, { trigger: 190000, keep: null });
+  assert.match(plan.warnings.join(' '), /could not determine/i);
 });
 
 test('Claude Code apply writes with a backup and verify reads it back', (t) => {
@@ -166,6 +195,87 @@ test('Claude Code rejects JSON with comments and print matches the template', (t
   });
   const legacy = claude.print(claudeCtx(emptyHome, '2.1.200'), policy);
   assert.deepEqual(JSON.parse(legacy), { autoCompactEnabled: true });
+  const unknown = claude.print(missingCliCtx(emptyHome), policy);
+  assert.deepEqual(JSON.parse(unknown), {
+    autoCompactEnabled: true,
+    autoCompactWindow: 190000,
+  });
+});
+
+test('Claude Code verify requires the window on supported versions', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, `${JSON.stringify({
+    autoCompactEnabled: true,
+  }, null, 2)}\n`);
+  const result = claude.verify(claudeCtx(home), policy);
+  assert.equal(result.effective.trigger, null);
+  assert.equal(result.ok, false);
+  assert.match(result.warnings.join(' '), /autoCompactWindow/);
+});
+
+test('Claude Code verify requires the window when the version is unknown', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, `${JSON.stringify({
+    autoCompactEnabled: true,
+  }, null, 2)}\n`);
+  const result = claude.verify(missingCliCtx(home), policy);
+  assert.equal(result.ok, false);
+  assert.match(result.warnings.join(' '), /autoCompactWindow/);
+});
+
+test('Claude Code verify rejects a wrong window', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, `${JSON.stringify({
+    autoCompactEnabled: true,
+    autoCompactWindow: 180000,
+  }, null, 2)}\n`);
+  const result = claude.verify(claudeCtx(home), policy);
+  assert.equal(result.effective.trigger, 180000);
+  assert.equal(result.ok, false);
+  assert.match(result.warnings.join(' '), /autoCompactWindow/);
+});
+
+test('Claude Code verify accepts correct keys for supported and unknown versions', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, `${JSON.stringify({
+    autoCompactEnabled: true,
+    autoCompactWindow: 190000,
+  }, null, 2)}\n`);
+  assert.deepEqual(claude.verify(claudeCtx(home), policy), {
+    effective: { trigger: 190000, keep: null },
+    warnings: [],
+    ok: true,
+  });
+  assert.deepEqual(claude.verify(missingCliCtx(home), policy), {
+    effective: { trigger: 190000, keep: null },
+    warnings: [],
+    ok: true,
+  });
+});
+
+test('Claude Code verify tolerates a missing window on old versions', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, `${JSON.stringify({
+    autoCompactEnabled: true,
+  }, null, 2)}\n`);
+  const result = claude.verify(claudeCtx(home, '2.1.200'), policy);
+  assert.deepEqual(result, {
+    effective: { trigger: null, keep: null },
+    warnings: [],
+    ok: true,
+  });
+});
+
+test('Claude Code verify validates a window present on an old version', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(home, claudePath, `${JSON.stringify({
+    autoCompactEnabled: true,
+    autoCompactWindow: 180000,
+  }, null, 2)}\n`);
+  const result = claude.verify(claudeCtx(home, '2.1.200'), policy);
+  assert.equal(result.effective.trigger, 180000);
+  assert.equal(result.ok, false);
+  assert.match(result.warnings.join(' '), /autoCompactWindow/);
 });
 
 test('Gemini writes the new threshold key and reports 190K', (t) => {
