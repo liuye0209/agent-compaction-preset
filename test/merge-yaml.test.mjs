@@ -225,3 +225,204 @@ test('read reports no entry for an unrelated patch', () => {
     { found: false, config: {} },
   );
 });
+
+test('a comment aligned with config does not truncate the config block', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto: false',
+    '# aligned with config:',
+    '    thresholdRatio: 0.8',
+    '    headroomTokens: 12',
+    '    maxTokens: 4096',
+    '    retainTokens: 40000',
+    '',
+  ].join('\n');
+
+  assert.deepEqual(readDshCompactionConfig(input), {
+    found: true,
+    config: {
+      auto: false,
+      thresholdRatio: 0.8,
+      headroomTokens: 12,
+      maxTokens: 4096,
+      retainTokens: 40000,
+    },
+  });
+
+  const output = mergeDshCompactionBlock(input, config);
+  assert.match(output, /# aligned with config:/);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+const unexpectedConfigStructures = [
+  {
+    name: 'a flow map after config',
+    lines: ['- id: compaction-basic', '  config:', '    { thresholdRatio: 0.8 }', ''],
+  },
+  {
+    name: 'a sequence after config',
+    lines: ['- id: compaction-basic', '  config:', '    - auto: true', ''],
+  },
+  {
+    name: 'a scalar after config',
+    lines: ['- id: compaction-basic', '  config:', '    just a scalar', ''],
+  },
+  {
+    name: 'a block scalar target value',
+    lines: ['- id: compaction-basic', '  config:', '    auto: |', '      false', ''],
+  },
+  {
+    name: 'a flow mapping target value',
+    lines: ['- id: compaction-basic', '  config:', '    auto: { enabled: true }', ''],
+  },
+  {
+    name: 'a flow sequence target value',
+    lines: ['- id: compaction-basic', '  config:', '    auto: [true]', ''],
+  },
+  {
+    name: 'a folded block scalar target value',
+    lines: ['- id: compaction-basic', '  config:', '    auto: >', '      true', ''],
+  },
+  {
+    name: 'an anchored target value',
+    lines: ['- id: compaction-basic', '  config:', '    auto: &enabled true', ''],
+  },
+  {
+    name: 'an aliased target value',
+    lines: ['- id: compaction-basic', '  config:', '    auto: *enabled', ''],
+  },
+  {
+    name: 'a tagged target value',
+    lines: ['- id: compaction-basic', '  config:', '    auto: !enabled true', ''],
+  },
+];
+
+for (const { name, lines } of unexpectedConfigStructures) {
+  test(`rejects ${name} as an unexpected structure`, () => {
+    const input = lines.join('\n');
+    assert.throws(
+      () => mergeDshCompactionBlock(input, config),
+      /unexpected structure|unsupported structure/i,
+    );
+    assert.throws(
+      () => readDshCompactionConfig(input),
+      /unexpected structure|unsupported structure/i,
+    );
+  });
+}
+
+test('rejects a target key with a multiline plain scalar', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto: this is',
+    '      a multiline scalar',
+    '',
+  ].join('\n');
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    /unexpected structure/i,
+  );
+  assert.throws(() => readDshCompactionConfig(input), /unexpected structure/i);
+});
+
+test('rejects inconsistent entry indentation', () => {
+  const input = [
+    '-   id: compaction-basic',
+    "  name: '@deepseek-ai/dsh-compaction-basic'",
+    '  config:',
+    '    auto: false',
+    '',
+  ].join('\n');
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    /unexpected structure|unsupported structure/i,
+  );
+});
+
+test('inserts missing keys after an unknown nested block', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto: false',
+    '    modelPolicies:',
+    '      - provider: local',
+    '        retainTokens: 2048',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+  assert.match(
+    output,
+    /modelPolicies:\n      - provider: local\n        retainTokens: 2048\n    thresholdRatio: 0\.95/,
+  );
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('rejects duplicate direct target keys instead of updating both', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto: false',
+    '    thresholdRatio: 0.8',
+    '    auto: true',
+    '',
+  ].join('\n');
+  assert.throws(() => mergeDshCompactionBlock(input, config), /duplicate/i);
+  assert.throws(() => readDshCompactionConfig(input), /duplicate/i);
+});
+
+test('updates a noncanonically indented entry using the dash column', () => {
+  const input = [
+    '-   id: compaction-basic',
+    "    name: '@deepseek-ai/dsh-compaction-basic'",
+    '    config:',
+    '      auto: false',
+    '      retainTokens: 40000',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+  assert.match(output, /^    config:$/m);
+  assert.match(output, /^      auto: true$/m);
+  assert.match(output, /^      thresholdRatio: 0\.95$/m);
+  assert.match(output, /^      retainTokens: 50000$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('rejects a top-level flow-style compaction entry', () => {
+  const input = ['- { id: compaction-basic, config: {} }', ''].join('\n');
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    /unexpected structure|unsupported structure/i,
+  );
+});
+
+const unsupportedRoots = [
+  { name: 'a top-level mapping', lines: ['plugins:', '  - id: telemetry', ''] },
+  { name: 'an empty flow mapping', lines: ['{}', ''] },
+  { name: 'a nonempty flow sequence', lines: ['[1, 2]', ''] },
+  { name: 'a scalar document', lines: ['just-a-scalar', ''] },
+  { name: 'a document marker', lines: ['---', '- id: telemetry', ''] },
+];
+
+for (const { name, lines } of unsupportedRoots) {
+  test(`rejects appending to ${name}`, () => {
+    assert.throws(
+      () => mergeDshCompactionBlock(lines.join('\n'), config),
+      /unexpected structure|unsupported structure/i,
+    );
+  });
+}
+
+test('replaces whitespace-only documents and empty flow sequences', () => {
+  const expected = mergeDshCompactionBlock('', config);
+  for (const input of ['', '   \n\n', '[]\n', '[ ]\n', '[] # comment\n']) {
+    assert.equal(mergeDshCompactionBlock(input, config), expected);
+  }
+});
+
+test('keeps a leading comment when appending to a comment-only document', () => {
+  const output = mergeDshCompactionBlock('# preamble\n', config);
+  assert.match(output, /^# preamble$/m);
+  assert.match(output, /^- id: compaction-basic$/m);
+});

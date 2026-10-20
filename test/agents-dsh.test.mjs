@@ -110,6 +110,9 @@ test('DSH detect lists multiple profiles and plan requires a selection', (t) => 
 
 test('DSH explicit missing profile requires --create and creates without a backup', (t) => {
   const home = tempHome(t);
+  fs.mkdirSync(path.join(home, '.dsh', 'profiles', 'laptop'), {
+    recursive: true,
+  });
   const ctx = makeCtx(home, { profile: 'laptop' });
   const configPath = path.join(
     home,
@@ -247,15 +250,47 @@ test('DSH verify reports mismatches and computes the configured trigger', (t) =>
   assert.match(result.warnings.join(' '), /retainTokens/);
 });
 
-test('DSH verify reports a missing file without throwing', (t) => {
+test('DSH verify reports a missing file for an explicit profile', (t) => {
   const home = tempHome(t);
   fs.mkdirSync(path.join(home, '.dsh', 'profiles', 'desktop'), {
     recursive: true,
   });
-  const result = dsh.verify(makeCtx(home), policy);
+  const result = dsh.verify(makeCtx(home, { profile: 'desktop' }), policy);
   assert.equal(result.ok, false);
   assert.deepEqual(result.effective, { trigger: null, keep: 50000 });
   assert.match(result.warnings.join(' '), /does not exist/);
+});
+
+test('DSH ignores profile directories without a patch file', (t) => {
+  const home = tempHome(t);
+  const file = writeHomeFile(home, desktop, '[]\n');
+  fs.mkdirSync(path.join(home, '.dsh', 'profiles', 'scratch'), {
+    recursive: true,
+  });
+
+  const detection = dsh.detect(makeCtx(home));
+  assert.equal(detection.detected, true);
+  assert.equal(detection.configPath, file);
+  assert.deepEqual(detection.notes, []);
+
+  const plan = dsh.plan(makeCtx(home), policy);
+  assert.equal(plan.configPath, file);
+  assert.equal(plan.status, 'planned');
+});
+
+test('DSH reports no profiles when only unrelated directories exist', (t) => {
+  const home = tempHome(t);
+  fs.mkdirSync(path.join(home, '.dsh', 'profiles', 'scratch'), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(home, '.dsh', 'profiles', 'laptop'), {
+    recursive: true,
+  });
+
+  const detection = dsh.detect(makeCtx(home));
+  assert.equal(detection.detected, false);
+  assert.deepEqual(detection.notes, []);
+  assert.throws(() => dsh.plan(makeCtx(home), policy), /--profile/);
 });
 
 test('DSH verify reports multiple profiles without throwing', (t) => {
@@ -281,3 +316,101 @@ test('DSH honors DSH_HOME', (t) => {
   const plan = dsh.plan(ctx, policy);
   assert.equal(plan.configPath, path.join(custom, relative));
 });
+
+test('DSH plans and applies a noncanonically indented entry', (t) => {
+  const home = tempHome(t);
+  const file = writeHomeFile(
+    home,
+    desktop,
+    [
+      '-   id: compaction-basic',
+      "    name: '@deepseek-ai/dsh-compaction-basic'",
+      '    config:',
+      '      auto: false',
+      '',
+    ].join('\n'),
+  );
+  const ctx = makeCtx(home);
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'planned');
+  assert.match(plan.nextContent, /^      auto: true$/m);
+
+  dsh.apply(ctx, plan);
+  assert.match(fs.readFileSync(file, 'utf8'), /^      thresholdRatio: 0\.95$/m);
+  assert.deepEqual(dsh.verify(ctx, policy), {
+    effective: { trigger: 190000, keep: 50000 },
+    warnings: [],
+    ok: true,
+  });
+});
+
+const manualStructures = [
+  [
+    'a flow map on the line after config',
+    ['- id: compaction-basic', '  config:', '    { thresholdRatio: 0.8 }', ''],
+  ],
+  [
+    'a sequence after config',
+    ['- id: compaction-basic', '  config:', '    - auto: true', ''],
+  ],
+  [
+    'a block scalar target value',
+    ['- id: compaction-basic', '  config:', '    auto: |', '      false', ''],
+  ],
+  [
+    'a flow mapping target value',
+    ['- id: compaction-basic', '  config:', '    auto: { enabled: true }', ''],
+  ],
+  [
+    'duplicate direct target keys',
+    [
+      '- id: compaction-basic',
+      '  config:',
+      '    auto: false',
+      '    thresholdRatio: 0.8',
+      '    auto: true',
+      '',
+    ],
+  ],
+  [
+    'a top-level flow-style compaction entry',
+    ['- { id: compaction-basic, config: {} }', ''],
+  ],
+  [
+    'a top-level mapping root',
+    [
+      'plugins:',
+      '  - id: compaction-basic',
+      '    config:',
+      '      auto: false',
+      '',
+    ],
+  ],
+  ['an empty flow mapping root', ['{}', '']],
+  ['a nonempty flow sequence root', ['[1, 2]', '']],
+  ['a scalar root', ['just-a-scalar', '']],
+];
+
+for (const [name, lines] of manualStructures) {
+  test(`DSH returns a manual plan for ${name}`, (t) => {
+    const home = tempHome(t);
+    const content = lines.join('\n');
+    const file = writeHomeFile(home, desktop, content);
+    const ctx = makeCtx(home);
+
+    const plan = dsh.plan(ctx, policy);
+    assert.equal(plan.status, 'manual');
+    assert.equal(plan.template, template);
+    assert.equal('nextContent' in plan, false);
+    assert.deepEqual(plan.changes, []);
+    assert.match(plan.warnings.join(' '), /unexpected|unsupported/i);
+
+    assert.throws(() => dsh.apply(ctx, plan), /manual/i);
+    assert.equal(fs.readFileSync(file, 'utf8'), content);
+    assertNoBackup(file);
+
+    const verified = dsh.verify(ctx, policy);
+    assert.equal(verified.ok, false);
+    assert.match(verified.warnings.join(' '), /unexpected|unsupported|manual/i);
+  });
+}
