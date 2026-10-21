@@ -36,10 +36,17 @@ test('selection filters empty and whitespace-only entries', () => {
   assert.deepEqual(parseAgentSelection('  '), []);
 });
 
+test('selection deduplicates, rejects mixed all, and rejects non-strings', () => {
+  assert.deepEqual(parseAgentSelection('codex,codex'), ['codex']);
+  assert.throws(() => parseAgentSelection('all,codex'), /Unknown agent/);
+  assert.throws(() => parseAgentSelection(null), /Unknown agent/);
+});
+
 test('resolveAdapters preserves the requested order', () => {
   assert.deepEqual(resolveAdapters(['codex', 'opencode']).map((a) => a.id), [
     'codex', 'opencode',
   ]);
+  assert.throws(() => resolveAdapters(['nope']), /Unknown agent/);
 });
 
 test('detectAdapters reports configured agents', (t) => {
