@@ -622,3 +622,64 @@ test('DSH treats a multiline flow map that could hide a rewrite as manual', (t) 
   assert.equal(verified.ok, false);
   assert.match(verified.warnings.join(' '), /multiline flow collections/i);
 });
+
+test('DSH treats a quoted scalar hidden behind a colon-containing key as manual', (t) => {
+  const home = tempHome(t);
+  const content = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom:foo: "hello',
+    '    auto: false',
+    '    bye: true"',
+    '',
+  ].join('\n');
+  const file = writeHomeFile(home, desktop, content);
+  const ctx = makeCtx(home);
+
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'manual');
+  assert.equal(plan.template, template);
+  assert.equal('nextContent' in plan, false);
+  assert.deepEqual(plan.changes, []);
+  assert.match(plan.warnings.join(' '), /multiline quoted scalars/i);
+
+  assert.throws(() => dsh.apply(ctx, plan), /manual/i);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+  assertNoBackup(file);
+
+  const verified = dsh.verify(ctx, policy);
+  assert.equal(verified.ok, false);
+  assert.match(verified.warnings.join(' '), /multiline quoted scalars/i);
+});
+
+test('DSH plans and applies colon-containing keys with single-line quoted values', (t) => {
+  const home = tempHome(t);
+  const content = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom:foo: "hello"',
+    '    auto:foo: "hello"',
+    '',
+  ].join('\n');
+  const file = writeHomeFile(home, desktop, content);
+  const ctx = makeCtx(home);
+
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'planned');
+  assert.ok(plan.nextContent.includes('    custom:foo: "hello"\n'));
+  assert.ok(plan.nextContent.includes('    auto:foo: "hello"\n'));
+  assert.match(plan.nextContent, /^    auto: true$/m);
+  assert.equal(plan.nextContent.includes('auto:true'), false);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+
+  dsh.apply(ctx, plan);
+  const written = fs.readFileSync(file, 'utf8');
+  assert.ok(written.includes('    custom:foo: "hello"\n'));
+  assert.ok(written.includes('    auto:foo: "hello"\n'));
+  assert.match(written, /^    auto: true$/m);
+  assert.deepEqual(dsh.verify(ctx, policy), {
+    effective: { trigger: 190000, keep: 50000 },
+    warnings: [],
+    ok: true,
+  });
+});

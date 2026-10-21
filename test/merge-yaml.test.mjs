@@ -880,3 +880,117 @@ test('rejects quoted entry keys instead of appending a second block', () => {
     );
   }
 });
+
+test('rejects a multiline quoted scalar hidden behind a colon-containing key', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom:foo: "hello',
+    '    auto: false',
+    '    bye: true"',
+    '',
+  ].join('\n');
+
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    {
+      code: 'DSH_UNEXPECTED_STRUCTURE',
+      message: /multiline quoted scalars/i,
+    },
+  );
+  assert.throws(
+    () => readDshCompactionConfig(input),
+    {
+      code: 'DSH_UNEXPECTED_STRUCTURE',
+      message: /multiline quoted scalars/i,
+    },
+  );
+});
+
+test('preserves colon-containing keys with single-line quoted values', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom:foo: "hello"',
+    '    note: keep',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.ok(output.includes('    custom:foo: "hello"\n'));
+  assert.ok(output.includes('    note: keep\n'));
+  assert.match(output, /^    auto: true$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('does not treat a colon-containing target prefix as the target key', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto:foo: "hello"',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.ok(output.includes('    auto:foo: "hello"\n'));
+  assert.match(output, /^    auto: true$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('rejects a target-shaped line whose colon is not followed by whitespace', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto:false',
+    '    thresholdRatio: 0.8',
+    '',
+  ].join('\n');
+
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    /unexpected structure/i,
+  );
+  assert.throws(() => readDshCompactionConfig(input), /unexpected structure/i);
+});
+
+test('updates a target whose colon is followed by a tab', () => {
+  const input = ['- id: compaction-basic', '  config:', '    auto:\tfalse', ''].join(
+    '\n',
+  );
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /^    auto:\ttrue$/m);
+  assert.equal(readDshCompactionConfig(output).config.auto, true);
+});
+
+test('updates a target with an empty value', () => {
+  const input = ['- id: compaction-basic', '  config:', '    auto:', ''].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /^    auto: true$/m);
+  assert.equal(readDshCompactionConfig(output).config.auto, true);
+});
+
+test('updates a target with an empty value and a comment', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto: # disabled',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /^    auto: true # disabled$/m);
+  assert.equal(readDshCompactionConfig(output).config.auto, true);
+});
+
+test('updates a normal target in place without duplicating it', () => {
+  const input = ['- id: compaction-basic', '  config:', '    auto: false', ''].join(
+    '\n',
+  );
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /^    auto: true$/m);
+  assert.equal(output.match(/^    auto: /gm).length, 1);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
