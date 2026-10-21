@@ -686,6 +686,106 @@ for (const { name, lines } of multilineQuotedConfigs) {
   });
 }
 
+const multilineFlowConfigs = [
+  {
+    name: 'a multiline flow map hiding a target key',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: {',
+      '    auto: false',
+      '    }',
+      '',
+    ],
+  },
+  {
+    name: 'a multiline flow map whose closing brace shares a line with a key',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: {',
+      '    auto: false,',
+      '    other: true }',
+      '',
+    ],
+  },
+  {
+    name: 'a multiline flow sequence under an unknown key',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: [',
+      '      one,',
+      '      two,',
+      '    ]',
+      '',
+    ],
+  },
+];
+
+for (const { name, lines } of multilineFlowConfigs) {
+  test(`rejects ${name} as an unexpected structure`, () => {
+    const input = lines.join('\n');
+
+    assert.throws(
+      () => mergeDshCompactionBlock(input, config),
+      {
+        code: 'DSH_UNEXPECTED_STRUCTURE',
+        message: /unexpected structure.*multiline flow collections/i,
+      },
+    );
+    assert.throws(
+      () => readDshCompactionConfig(input),
+      {
+        code: 'DSH_UNEXPECTED_STRUCTURE',
+        message: /unexpected structure.*multiline flow collections/i,
+      },
+    );
+  });
+}
+
+test('updates targets when unknown keys have single-line flow collections', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: { a: 1 }',
+    "    note: { text: don't }",
+    '    list: [1, 2, 3]',
+    '    auto: false',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /custom: \{ a: 1 \}/);
+  assert.match(output, /note: \{ text: don't \}/);
+  assert.match(output, /list: \[1, 2, 3\]/);
+  assert.match(output, /^    auto: true$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('ignores braces and brackets in quoted values and block scalar content', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: "hello { world"',
+    '    anchored: &a "hello { world"',
+    "    other: '[1, 2'",
+    '    block: |',
+    '      { not: closed',
+    '      [ also not closed',
+    '    auto: false',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /custom: "hello \{ world"/);
+  assert.match(output, /anchored: &a "hello \{ world"/);
+  assert.match(output, /other: '\[1, 2'/);
+  assert.match(output, /^      \{ not: closed$/m);
+  assert.match(output, /^    auto: true$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
 test('updates targets when unknown keys have single-line quoted values', () => {
   const input = [
     '- id: compaction-basic',

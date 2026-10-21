@@ -431,6 +431,39 @@ test('DSH plans and applies with single-line quoted unknown values', (t) => {
   });
 });
 
+test('DSH plans and applies with single-line flow collections under unknown keys', (t) => {
+  const home = tempHome(t);
+  const content = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: { a: 1 }',
+    "    note: { text: don't }",
+    '    list: [1, 2, 3]',
+    '',
+  ].join('\n');
+  const file = writeHomeFile(home, desktop, content);
+  const ctx = makeCtx(home);
+
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'planned');
+  assert.ok(plan.nextContent.includes('    custom: { a: 1 }\n'));
+  assert.ok(plan.nextContent.includes("    note: { text: don't }\n"));
+  assert.ok(plan.nextContent.includes('    list: [1, 2, 3]\n'));
+  assert.match(plan.nextContent, /^    auto: true$/m);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+
+  dsh.apply(ctx, plan);
+  const written = fs.readFileSync(file, 'utf8');
+  assert.ok(written.includes('    custom: { a: 1 }\n'));
+  assert.ok(written.includes("    note: { text: don't }\n"));
+  assert.ok(written.includes('    list: [1, 2, 3]\n'));
+  assert.deepEqual(dsh.verify(ctx, policy), {
+    effective: { trigger: 190000, keep: 50000 },
+    warnings: [],
+    ok: true,
+  });
+});
+
 const manualStructures = [
   [
     'a flow map on the line after config',
@@ -512,6 +545,29 @@ const manualStructures = [
       '',
     ],
   ],
+  [
+    'a multiline flow map hiding target-looking lines',
+    [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: {',
+      '    auto: false',
+      '    }',
+      '',
+    ],
+  ],
+  [
+    'a multiline flow sequence under an unknown key',
+    [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: [',
+      '      one,',
+      '      two,',
+      '    ]',
+      '',
+    ],
+  ],
 ];
 
 for (const [name, lines] of manualStructures) {
@@ -537,3 +593,32 @@ for (const [name, lines] of manualStructures) {
     assert.match(verified.warnings.join(' '), /unexpected|unsupported|manual/i);
   });
 }
+
+test('DSH treats a multiline flow map that could hide a rewrite as manual', (t) => {
+  const home = tempHome(t);
+  const content = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: {',
+    '    auto: false,',
+    '    other: true }',
+    '',
+  ].join('\n');
+  const file = writeHomeFile(home, desktop, content);
+  const ctx = makeCtx(home);
+
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'manual');
+  assert.equal(plan.template, template);
+  assert.equal('nextContent' in plan, false);
+  assert.deepEqual(plan.changes, []);
+  assert.match(plan.warnings.join(' '), /multiline flow collections/i);
+
+  assert.throws(() => dsh.apply(ctx, plan), /manual/i);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+  assertNoBackup(file);
+
+  const verified = dsh.verify(ctx, policy);
+  assert.equal(verified.ok, false);
+  assert.match(verified.warnings.join(' '), /multiline flow collections/i);
+});
