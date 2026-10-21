@@ -994,3 +994,85 @@ test('updates a normal target in place without duplicating it', () => {
   assert.equal(output.match(/^    auto: /gm).length, 1);
   assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
 });
+
+const nodePropertyKeyLines = [
+  ['an anchored key', '&a auto: false'],
+  ['a tagged key', '!!str auto: false'],
+];
+
+for (const [name, line] of nodePropertyKeyLines) {
+  test(`rejects ${name} at direct config indent as an unexpected structure`, () => {
+    const input = [
+      '- id: compaction-basic',
+      '  config:',
+      `    ${line}`,
+      '',
+    ].join('\n');
+
+    assert.throws(
+      () => mergeDshCompactionBlock(input, config),
+      {
+        code: 'DSH_UNEXPECTED_STRUCTURE',
+        message: /unexpected structure/i,
+      },
+    );
+    assert.throws(
+      () => readDshCompactionConfig(input),
+      {
+        code: 'DSH_UNEXPECTED_STRUCTURE',
+        message: /unexpected structure/i,
+      },
+    );
+  });
+}
+
+test('rejects keys that start with YAML node-property or indicator characters', () => {
+  const prefixes = [
+    '&a ',
+    '!a ',
+    '*a ',
+    '%a ',
+    '@a ',
+    '`a ',
+    '| ',
+    '> ',
+    ', ',
+    '] ',
+    '} ',
+    ': ',
+  ];
+
+  for (const prefix of prefixes) {
+    const input = [
+      '- id: compaction-basic',
+      '  config:',
+      `    ${prefix}auto: false`,
+      '',
+    ].join('\n');
+
+    assert.throws(
+      () => mergeDshCompactionBlock(input, config),
+      {
+        code: 'DSH_UNEXPECTED_STRUCTURE',
+        message: /unexpected structure/i,
+      },
+      `expected a key starting with ${JSON.stringify(prefix)} to fail closed`,
+    );
+  }
+});
+
+test('preserves keys containing & and ! after the first character', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom&foo: bar',
+    '    custom!foo: baz',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.ok(output.includes('    custom&foo: bar\n'));
+  assert.ok(output.includes('    custom!foo: baz\n'));
+  assert.match(output, /^    auto: true$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});

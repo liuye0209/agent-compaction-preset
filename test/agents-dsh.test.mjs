@@ -568,6 +568,14 @@ const manualStructures = [
       '',
     ],
   ],
+  [
+    'an anchored direct config key',
+    ['- id: compaction-basic', '  config:', '    &a auto: false', ''],
+  ],
+  [
+    'a tagged direct config key',
+    ['- id: compaction-basic', '  config:', '    !!str auto: false', ''],
+  ],
 ];
 
 for (const [name, lines] of manualStructures) {
@@ -677,6 +685,64 @@ test('DSH plans and applies colon-containing keys with single-line quoted values
   assert.ok(written.includes('    custom:foo: "hello"\n'));
   assert.ok(written.includes('    auto:foo: "hello"\n'));
   assert.match(written, /^    auto: true$/m);
+  assert.deepEqual(dsh.verify(ctx, policy), {
+    effective: { trigger: 190000, keep: 50000 },
+    warnings: [],
+    ok: true,
+  });
+});
+
+test('DSH fails closed on an anchored key instead of duplicating the target', (t) => {
+  const home = tempHome(t);
+  const content = [
+    '- id: compaction-basic',
+    '  config:',
+    '    &a auto: false',
+    '',
+  ].join('\n');
+  const file = writeHomeFile(home, desktop, content);
+  const ctx = makeCtx(home);
+
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'manual');
+  assert.equal(plan.template, template);
+  assert.equal('nextContent' in plan, false);
+  assert.deepEqual(plan.changes, []);
+  assert.match(plan.warnings.join(' '), /unexpected structure/i);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+
+  assert.throws(() => dsh.apply(ctx, plan), /manual/i);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+  assertNoBackup(file);
+
+  const verified = dsh.verify(ctx, policy);
+  assert.equal(verified.ok, false);
+  assert.match(verified.warnings.join(' '), /unexpected structure/i);
+});
+
+test('DSH plans keys containing & and ! after the first character', (t) => {
+  const home = tempHome(t);
+  const content = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom&foo: bar',
+    '    custom!foo: baz',
+    '',
+  ].join('\n');
+  const file = writeHomeFile(home, desktop, content);
+  const ctx = makeCtx(home);
+
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'planned');
+  assert.ok(plan.nextContent.includes('    custom&foo: bar\n'));
+  assert.ok(plan.nextContent.includes('    custom!foo: baz\n'));
+  assert.match(plan.nextContent, /^    auto: true$/m);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+
+  dsh.apply(ctx, plan);
+  const written = fs.readFileSync(file, 'utf8');
+  assert.ok(written.includes('    custom&foo: bar\n'));
+  assert.ok(written.includes('    custom!foo: baz\n'));
   assert.deepEqual(dsh.verify(ctx, policy), {
     effective: { trigger: 190000, keep: 50000 },
     warnings: [],
