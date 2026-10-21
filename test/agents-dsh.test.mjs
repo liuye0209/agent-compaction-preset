@@ -358,15 +358,16 @@ const scalarPreservationInputs = [
     scalarText: '    custom: |\n      hello\n      # literal last line',
   },
   {
-    name: 'a multiline double-quoted scalar containing a # line',
+    name: 'a block scalar containing unclosed quotes',
     lines: [
       '- id: compaction-basic',
       '  config:',
-      '    custom: "hello',
-      '      # literal"',
+      '    custom: |',
+      '      hello "unclosed',
+      "      and 'also unclosed",
       '',
     ],
-    scalarText: '    custom: "hello\n      # literal"',
+    scalarText: '    custom: |\n      hello "unclosed\n      and \'also unclosed',
   },
 ];
 
@@ -395,6 +396,40 @@ for (const { name, lines, scalarText } of scalarPreservationInputs) {
     });
   });
 }
+
+test('DSH plans and applies with single-line quoted unknown values', (t) => {
+  const home = tempHome(t);
+  const content = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: "hello: auto: false"',
+    '    hash: "hello # world"',
+    "    note: 'it''s fine'",
+    '    auto: false # it\'s "fine"',
+    '',
+  ].join('\n');
+  const file = writeHomeFile(home, desktop, content);
+  const ctx = makeCtx(home);
+
+  const plan = dsh.plan(ctx, policy);
+  assert.equal(plan.status, 'planned');
+  assert.ok(plan.nextContent.includes('    custom: "hello: auto: false"\n'));
+  assert.ok(plan.nextContent.includes('    hash: "hello # world"\n'));
+  assert.ok(plan.nextContent.includes("    note: 'it''s fine'\n"));
+  assert.match(plan.nextContent, /^    auto: true # it's "fine"$/m);
+  assert.equal(fs.readFileSync(file, 'utf8'), content);
+
+  dsh.apply(ctx, plan);
+  const written = fs.readFileSync(file, 'utf8');
+  assert.ok(written.includes('    custom: "hello: auto: false"\n'));
+  assert.ok(written.includes('    hash: "hello # world"\n'));
+  assert.ok(written.includes("    note: 'it''s fine'\n"));
+  assert.deepEqual(dsh.verify(ctx, policy), {
+    effective: { trigger: 190000, keep: 50000 },
+    warnings: [],
+    ok: true,
+  });
+});
 
 const manualStructures = [
   [
@@ -456,6 +491,27 @@ const manualStructures = [
     ],
   ],
   ['a quoted entry key', ['- "id": compaction-basic', '']],
+  [
+    'a multiline double-quoted scalar',
+    [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: "hello',
+      '      # literal"',
+      '',
+    ],
+  ],
+  [
+    'a multiline quoted scalar hiding target-looking lines',
+    [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: "hello',
+      '    auto: false',
+      '    bye"',
+      '',
+    ],
+  ],
 ];
 
 for (const [name, lines] of manualStructures) {

@@ -545,19 +545,6 @@ const scalarPreservationCases = [
     blankLinesAfterScalar: 1,
   },
   {
-    name: 'a multiline double-quoted scalar containing a # line',
-    lines: [
-      '- id: compaction-basic',
-      '  config:',
-      '    custom: "hello',
-      '      # literal"',
-      '',
-    ],
-    scalarText: '    custom: "hello\n      # literal"',
-    lastScalarLine: '      # literal"',
-    blankLinesAfterScalar: 0,
-  },
-  {
     name: 'a direct literal block scalar whose last line starts with #',
     lines: [
       '- id: compaction-basic',
@@ -608,6 +595,150 @@ for (const {
     assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
   });
 }
+
+const multilineQuotedConfigs = [
+  {
+    name: 'a multiline double-quoted scalar',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: "hello',
+      '      # literal"',
+      '',
+    ],
+  },
+  {
+    name: 'a multiline double-quoted scalar containing target-looking lines',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: "hello',
+      '    auto: false',
+      '    bye"',
+      '',
+    ],
+  },
+  {
+    name: 'a multiline single-quoted scalar containing target-looking lines',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      "    custom: 'hello",
+      '    auto: false',
+      "    bye'",
+      '',
+    ],
+  },
+  {
+    name: 'an anchored multiline double-quoted scalar',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: &a "hello',
+      '    auto: false',
+      '    bye"',
+      '',
+    ],
+  },
+  {
+    name: 'a multiline double-quoted scalar with escaped quotes',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: "hello \\"there',
+      '    auto: false',
+      '    bye"',
+      '',
+    ],
+  },
+  {
+    name: 'a sequence-item multiline double-quoted scalar',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    prompts:',
+      '      - "hello',
+      '        auto: false',
+      '        bye"',
+      '',
+    ],
+  },
+];
+
+for (const { name, lines } of multilineQuotedConfigs) {
+  test(`rejects ${name} as an unexpected structure`, () => {
+    const input = lines.join('\n');
+
+    assert.throws(
+      () => mergeDshCompactionBlock(input, config),
+      {
+        code: 'DSH_UNEXPECTED_STRUCTURE',
+        message: /multiline quoted scalars/i,
+      },
+    );
+    assert.throws(
+      () => readDshCompactionConfig(input),
+      {
+        code: 'DSH_UNEXPECTED_STRUCTURE',
+        message: /multiline quoted scalars/i,
+      },
+    );
+  });
+}
+
+test('updates targets when unknown keys have single-line quoted values', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: "hello: auto: false"',
+    '    hash: "hello # world"',
+    "    other: 'it''s fine'",
+    '    auto: false # it\'s "fine"',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /custom: "hello: auto: false"/);
+  assert.match(output, /hash: "hello # world"/);
+  assert.match(output, /other: 'it''s fine'/);
+  assert.match(output, /^    auto: true # it's "fine"$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('ignores quotes inside block scalar content', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    custom: |',
+    '      hello "unclosed',
+    "      and 'also unclosed",
+    '    prompts:',
+    '      - |',
+    '        another "unclosed',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.ok(output.startsWith(input));
+  assert.ok(output.includes('      hello "unclosed\n'));
+  assert.ok(output.includes('        another "unclosed\n'));
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
+test('ignores quotes in comments when inspecting config', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    # it\'s a "comment',
+    '    auto: false # don\'t "worry"',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+
+  assert.match(output, /# it's a "comment/);
+  assert.match(output, /^    auto: true # don't "worry"$/m);
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
 
 test('updates an existing target in place before an unknown scalar block', () => {
   const input = [
