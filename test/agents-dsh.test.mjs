@@ -344,6 +344,58 @@ test('DSH plans and applies a noncanonically indented entry', (t) => {
   });
 });
 
+const scalarPreservationInputs = [
+  {
+    name: 'a block scalar whose last line starts with #',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: |',
+      '      hello',
+      '      # literal last line',
+      '',
+    ],
+    scalarText: '    custom: |\n      hello\n      # literal last line',
+  },
+  {
+    name: 'a multiline double-quoted scalar containing a # line',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: "hello',
+      '      # literal"',
+      '',
+    ],
+    scalarText: '    custom: "hello\n      # literal"',
+  },
+];
+
+for (const { name, lines, scalarText } of scalarPreservationInputs) {
+  test(`DSH plan and apply preserve ${name} while adding targets`, (t) => {
+    const home = tempHome(t);
+    const content = lines.join('\n');
+    const file = writeHomeFile(home, desktop, content);
+    const ctx = makeCtx(home);
+
+    const plan = dsh.plan(ctx, policy);
+    assert.equal(plan.status, 'planned');
+    assert.ok(plan.nextContent.startsWith(content));
+    assert.ok(plan.nextContent.includes(scalarText));
+    assert.match(plan.nextContent, /^    auto: true$/m);
+    assert.equal(fs.readFileSync(file, 'utf8'), content);
+
+    dsh.apply(ctx, plan);
+    const written = fs.readFileSync(file, 'utf8');
+    assert.ok(written.startsWith(content));
+    assert.ok(written.includes(scalarText));
+    assert.deepEqual(dsh.verify(ctx, policy), {
+      effective: { trigger: 190000, keep: 50000 },
+      warnings: [],
+      ok: true,
+    });
+  });
+}
+
 const manualStructures = [
   [
     'a flow map on the line after config',

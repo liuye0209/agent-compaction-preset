@@ -485,6 +485,151 @@ test('inserts missing keys after a block scalar whose last line starts with #', 
   assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
 });
 
+const scalarPreservationCases = [
+  {
+    name: 'a sequence-item literal block scalar whose last line starts with #',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    prompts:',
+      '      - |',
+      '        hello',
+      '        # literal last line',
+      '',
+    ],
+    scalarText:
+      '    prompts:\n      - |\n        hello\n        # literal last line',
+    lastScalarLine: '        # literal last line',
+    blankLinesAfterScalar: 0,
+  },
+  {
+    name: 'an anchored literal block scalar whose last line starts with #',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: &a |',
+      '      hello',
+      '      # literal last line',
+      '',
+    ],
+    scalarText: '    custom: &a |\n      hello\n      # literal last line',
+    lastScalarLine: '      # literal last line',
+    blankLinesAfterScalar: 0,
+  },
+  {
+    name: 'a tagged literal block scalar whose last line starts with #',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: !!str |',
+      '      hello',
+      '      # literal last line',
+      '',
+    ],
+    scalarText: '    custom: !!str |\n      hello\n      # literal last line',
+    lastScalarLine: '      # literal last line',
+    blankLinesAfterScalar: 0,
+  },
+  {
+    name: 'a keep-chomping block scalar with trailing blank lines',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: |+',
+      '      hello',
+      '',
+      '',
+    ],
+    scalarText: '    custom: |+\n      hello',
+    lastScalarLine: '      hello',
+    blankLinesAfterScalar: 1,
+  },
+  {
+    name: 'a multiline double-quoted scalar containing a # line',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: "hello',
+      '      # literal"',
+      '',
+    ],
+    scalarText: '    custom: "hello\n      # literal"',
+    lastScalarLine: '      # literal"',
+    blankLinesAfterScalar: 0,
+  },
+  {
+    name: 'a direct literal block scalar whose last line starts with #',
+    lines: [
+      '- id: compaction-basic',
+      '  config:',
+      '    custom: |',
+      '      hello',
+      '      # literal last line',
+      '',
+    ],
+    scalarText: '    custom: |\n      hello\n      # literal last line',
+    lastScalarLine: '      # literal last line',
+    blankLinesAfterScalar: 0,
+  },
+];
+
+for (const {
+  name,
+  lines,
+  scalarText,
+  lastScalarLine,
+  blankLinesAfterScalar,
+} of scalarPreservationCases) {
+  test(`inserts missing targets after ${name}`, () => {
+    const input = lines.join('\n');
+    const output = mergeDshCompactionBlock(input, config);
+    const outputLines = output.split('\n');
+    const lastScalar = outputLines.indexOf(lastScalarLine);
+    const firstInserted = outputLines.findIndex((line) =>
+      line.startsWith('    auto: '),
+    );
+
+    assert.ok(
+      output.startsWith(input),
+      'the original document, including the scalar, is preserved byte-for-byte',
+    );
+    assert.ok(output.includes(scalarText), 'the scalar text is preserved');
+    assert.notEqual(lastScalar, -1);
+    assert.notEqual(firstInserted, -1);
+    assert.ok(lastScalar < firstInserted, 'insertion follows the scalar');
+    assert.deepEqual(
+      outputLines.slice(lastScalar + 1, firstInserted),
+      Array(blankLinesAfterScalar).fill(''),
+      'the scalar trailing blank lines are preserved',
+    );
+    for (const key of Object.keys(config)) {
+      assert.match(output, new RegExp(`^    ${key}: `, 'm'));
+    }
+    assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+  });
+}
+
+test('updates an existing target in place before an unknown scalar block', () => {
+  const input = [
+    '- id: compaction-basic',
+    '  config:',
+    '    auto: false # old',
+    '    prompts:',
+    '      - |',
+    '        hello',
+    '        # literal last line',
+    '',
+  ].join('\n');
+  const output = mergeDshCompactionBlock(input, config);
+  assert.match(output, /^    auto: true # old$/m);
+  assert.ok(
+    output.includes(
+      '        # literal last line\n    thresholdRatio: 0.95\n',
+    ),
+  );
+  assert.deepEqual(readDshCompactionConfig(output), { found: true, config });
+});
+
 test('rejects quoted entry keys instead of appending a second block', () => {
   const starts = [
     ['- "id": compaction-basic', ''],
