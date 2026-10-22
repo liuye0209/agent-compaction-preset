@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { runCli } from '../lib/cli.mjs';
 import { tempHome, writeHomeFile } from './helpers.mjs';
 
 const bin = fileURLToPath(new URL('../bin/agent-compact.mjs', import.meta.url));
@@ -25,6 +26,19 @@ function run(args, home) {
       Path: emptyBin,
     },
   });
+}
+
+function listFiles(dir) {
+  const files = [];
+
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    files.push(full);
+
+    if (entry.isDirectory()) files.push(...listFiles(full));
+  }
+
+  return files;
 }
 
 function setup(home) {
@@ -128,4 +142,125 @@ test('print --agent dsh does not require a detected profile', (t) => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /compaction-basic/);
   assert.match(result.stdout, /retainTokens: 50000/);
+});
+
+test('plan rejects malformed JSON without echoing config content', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(
+    home,
+    path.join('.config', 'opencode', 'opencode.json'),
+    '{"token":"sk-test-not-real",}\n',
+  );
+  const result = run(['plan'], home);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Invalid JSON/);
+  assert.match(result.stderr, /opencode\.json/);
+  assert.equal(result.stderr.includes('sk-test-not-real'), false);
+  assert.equal(result.stderr.includes('"token"'), false);
+  assert.equal(result.stderr.includes('{"'), false);
+  assert.doesNotMatch(result.stderr, /Unexpected|Expected|is not valid JSON/);
+});
+
+test('--agent is rejected outside print and documented as print-only', (t) => {
+  const home = tempHome(t);
+  setup(home);
+
+  for (const command of ['plan', 'detect']) {
+    const result = run([command, '--agent', 'codex'], home);
+    assert.equal(result.status, 1, `${command}: ${result.stderr}`);
+    assert.match(result.stderr, /--agent/);
+    assert.match(result.stderr, /print/);
+  }
+
+  const help = run(['--help'], home);
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /--agent <id>.*print only/i);
+});
+
+test('plan leaves both configs unchanged and writes no backups', (t) => {
+  const home = tempHome(t);
+  const { opencode, codex } = setup(home);
+  const opencodeBefore = fs.readFileSync(opencode);
+  const codexBefore = fs.readFileSync(codex);
+  const result = run(['plan', '--json'], home);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(fs.readFileSync(opencode), opencodeBefore);
+  assert.deepEqual(fs.readFileSync(codex), codexBefore);
+  assert.equal(
+    listFiles(home).some((file) => path.basename(file).includes('.bak-agent-compact-')),
+    false,
+  );
+});
+
+test('detect --json returns all six adapters', (t) => {
+  const home = tempHome(t);
+  setup(home);
+  const result = run(['detect', '--json'], home);
+
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(
+    report.agents.map((agent) => agent.id),
+    ['opencode', 'dsh', 'codex', 'claude', 'gemini', 'qwen'],
+  );
+  assert.deepEqual(
+    report.agents.filter((agent) => agent.detected).map((agent) => agent.id).sort(),
+    ['codex', 'opencode'],
+  );
+});
+
+test('plan with no detected agents exits 2 with guidance', (t) => {
+  const home = tempHome(t);
+  const result = run(['plan'], home);
+
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /No configured agents detected/);
+  assert.match(result.stderr, /--agents/);
+});
+
+test('unknown commands and extra positionals exit 1', (t) => {
+  const home = tempHome(t);
+  const unknown = run(['frobnicate'], home);
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /Unknown command/);
+
+  const extra = run(['detect', 'extra'], home);
+  assert.equal(extra.status, 1);
+  assert.match(extra.stderr, /Unexpected argument/);
+});
+
+test('runCli passes io.env to child commands and honors io.stdout TTY', async (t) => {
+  const home = tempHome(t);
+  const env = { AGENT_COMPACT_TEST: '1' };
+  const calls = [];
+  const stdout = {
+    isTTY: true,
+    chunks: [],
+    write(chunk) {
+      this.chunks.push(chunk);
+    },
+  };
+  const stderr = {
+    chunks: [],
+    write(chunk) {
+      this.chunks.push(chunk);
+    },
+  };
+
+  const code = await runCli(['detect', '--home', home], {
+    stdout,
+    stderr,
+    env,
+    runCommand: (command, args, options = {}) => {
+      calls.push({ command, args, env: options.env });
+      return { status: 1, stdout: '', stderr: '' };
+    },
+  });
+
+  assert.equal(code, 0, stderr.chunks.join(''));
+  assert.equal(calls.length > 0, true);
+  assert.equal(calls.every((call) => call.env === env), true);
+  assert.match(stdout.chunks.join(''), /\x1b\[/);
 });

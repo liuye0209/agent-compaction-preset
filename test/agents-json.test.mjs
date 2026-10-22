@@ -5,6 +5,7 @@ import path from 'node:path';
 import claude from '../lib/agents/claude.mjs';
 import gemini from '../lib/agents/gemini.mjs';
 import qwen from '../lib/agents/qwen.mjs';
+import { readJsonFile } from '../lib/agents/common.mjs';
 import { resolvePolicy } from '../lib/policy.mjs';
 import { tempHome, writeHomeFile, makeCtx } from './helpers.mjs';
 
@@ -28,6 +29,27 @@ function missingCliCtx(home) {
 function assertNoBackup(file) {
   assert.deepEqual(fs.readdirSync(path.dirname(file)), [path.basename(file)]);
 }
+
+test('JSON parse errors report only the path and an optional position', (t) => {
+  const home = tempHome(t);
+  const file = writeHomeFile(
+    home,
+    path.join('.config', 'opencode', 'opencode.json'),
+    '{"token":"sk-test-not-real",}\n',
+  );
+  let message;
+
+  try {
+    readJsonFile(makeCtx(home), file);
+  } catch (error) {
+    message = error.message;
+  }
+
+  assert.ok(message, 'expected readJsonFile to throw');
+  assert.match(message, /^Invalid JSON in .*opencode\.json(?: at position \d+)?$/);
+  assert.equal(message.includes('sk-test-not-real'), false);
+  assert.equal(message.includes('"token"'), false);
+});
 
 test('Claude Code writes both keys on a supported version', (t) => {
   const home = tempHome(t);

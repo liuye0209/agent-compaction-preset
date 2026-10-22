@@ -12,6 +12,7 @@ const plan = {
   effective: { trigger: 190000, keep: 50000 },
   warnings: [],
   nextContent: '{"secret":"sk-test-not-real"}',
+  currentContent: '{"secret":"stale"}',
 };
 const result = {
   version: '0.1.0',
@@ -31,6 +32,61 @@ test('sanitizePlan adds the id alias without clobbering an existing id', () => {
   assert.equal(sanitizePlan(plan).id, 'opencode');
   assert.equal(sanitizePlan({ ...plan, id: 'custom' }).id, 'custom');
   assert.equal(plan.nextContent, '{"secret":"sk-test-not-real"}');
+  assert.equal(plan.currentContent, '{"secret":"stale"}');
+});
+
+test('sanitizePlan recursively removes content keys without mutating the input', () => {
+  const nested = {
+    agentId: 'opencode',
+    details: {
+      name: 'nested',
+      nextContent: '{"secret":"sk-test-not-real"}',
+      changes: [
+        { key: 'a', currentContent: 'old', nextContent: 'new' },
+        { deeper: { currentContent: 'old', value: 7 } },
+      ],
+    },
+  };
+  const safe = sanitizePlan(nested);
+
+  assert.deepEqual(safe, {
+    agentId: 'opencode',
+    id: 'opencode',
+    details: {
+      name: 'nested',
+      changes: [{ key: 'a' }, { deeper: { value: 7 } }],
+    },
+  });
+  assert.equal(JSON.stringify(safe).includes('Content'), false);
+  assert.equal(nested.details.nextContent, '{"secret":"sk-test-not-real"}');
+  assert.equal(nested.details.changes[0].currentContent, 'old');
+  assert.equal(nested.details.changes[1].deeper.currentContent, 'old');
+});
+
+test('JSON report removes nested content fields', () => {
+  const nestedResult = {
+    version: '0.1.0',
+    command: 'plan',
+    agents: [
+      {
+        agentId: 'opencode',
+        nested: {
+          nextContent: 'sk-test-not-real',
+          list: [{ currentContent: 'sk-test-not-real' }],
+        },
+      },
+    ],
+  };
+  const json = toJsonReport(nestedResult);
+
+  assert.equal(json.includes('nextContent'), false);
+  assert.equal(json.includes('currentContent'), false);
+  assert.equal(json.includes('sk-test-not-real'), false);
+  assert.deepEqual(JSON.parse(json).agents[0], {
+    agentId: 'opencode',
+    id: 'opencode',
+    nested: { list: [{}] },
+  });
 });
 
 test('JSON report contains no secrets or nextContent', () => {
@@ -38,6 +94,15 @@ test('JSON report contains no secrets or nextContent', () => {
   assert.equal(json.includes('sk-test-not-real'), false);
   assert.equal(json.includes('nextContent'), false);
   assert.equal(JSON.parse(json).agents[0].effective.trigger, 190000);
+});
+
+test('JSON report is indented and ends with exactly one newline', () => {
+  const json = toJsonReport(result);
+
+  assert.match(json, /^\{\n {2}"version": "0\.1\.0",\n/);
+  assert.equal(json.endsWith('\n'), true);
+  assert.equal(json.endsWith('\n\n'), false);
+  assert.equal(json, `${JSON.stringify(JSON.parse(json), null, 2)}\n`);
 });
 
 test('human report includes support and effective values', () => {
