@@ -74,7 +74,7 @@ when a selected agent has no configuration file yet.
 | `plan` | Shows the changes, effective trigger, retention, and warnings for the selected agents. | No |
 | `apply` | Validates plans, backs up existing files, writes, verifies, and rolls back the whole run on failure. | Yes |
 | `verify` | Reads the configuration back and reports the effective trigger, retention, and warnings. | No |
-| `restore` | Restores one backup, or the latest backup for each selected agent, after creating a safety backup. | Yes |
+| `restore` | Restores one backup, or the latest backup for each selected agent; creates a safety backup when replacing an existing file. | Yes |
 | `print` | Prints configuration templates. Defaults to all six agents; `--agent` selects one. | No |
 
 | Option | Meaning |
