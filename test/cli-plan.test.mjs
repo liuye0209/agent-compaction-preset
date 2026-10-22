@@ -69,6 +69,41 @@ test('plan --json reports both agents and never prints the bearer token', (t) =>
   assert.deepEqual(fs.readFileSync(opencode), before);
 });
 
+test('plan --context derives a 95% trigger unless --trigger is supplied', (t) => {
+  const home = tempHome(t);
+  setup(home);
+
+  const derived = run(
+    ['plan', '--context', '100000', '--agents', 'opencode', '--json'],
+    home,
+  );
+  assert.equal(derived.status, 0, derived.stderr);
+  const derivedReport = JSON.parse(derived.stdout);
+  assert.deepEqual(derivedReport.policy, {
+    context: 100000,
+    trigger: 95000,
+    keep: 50000,
+  });
+  assert.deepEqual(derivedReport.agents[0].effective, {
+    trigger: 95000,
+    keep: 50000,
+  });
+
+  const explicit = run(
+    [
+      'plan', '--context', '100000', '--trigger', '90000',
+      '--agents', 'opencode', '--json',
+    ],
+    home,
+  );
+  assert.equal(explicit.status, 0, explicit.stderr);
+  assert.deepEqual(JSON.parse(explicit.stdout).policy, {
+    context: 100000,
+    trigger: 90000,
+    keep: 50000,
+  });
+});
+
 test('detect --json lists configured agents', (t) => {
   const home = tempHome(t);
   setup(home);

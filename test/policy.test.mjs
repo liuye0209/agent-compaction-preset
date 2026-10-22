@@ -27,6 +27,25 @@ test('accepts a smaller context', () => {
   );
 });
 
+test('derives the default trigger from context at 95%', () => {
+  assert.deepEqual(resolvePolicy({ context: 100000 }), {
+    context: 100000,
+    trigger: 95000,
+    keep: 50000,
+  });
+  assert.deepEqual(resolvePolicy({ context: 300001 }), {
+    context: 300001,
+    trigger: 285000,
+    keep: 50000,
+  });
+  assert.deepEqual(resolvePolicy({ context: 100000, trigger: 90000 }), {
+    context: 100000,
+    trigger: 90000,
+    keep: 50000,
+  });
+  assert.throws(() => resolvePolicy({ context: 50000 }), /keep/);
+});
+
 test('rejects invalid windows', () => {
   assert.throws(() => resolvePolicy({ context: 0 }), /context/);
   assert.throws(() => resolvePolicy({ trigger: 200000 }), /trigger/);

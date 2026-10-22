@@ -79,7 +79,7 @@ when a selected agent has no configuration file yet.
 | `--agents <ids>` | Comma-separated agent ids, or `all`. Default: detected agents (all six for `print`). |
 | `--agent <id>` | Print one agent's template. Supported by `print` only. |
 | `--context <n>` | Model context window in tokens. Default: `200000`. |
-| `--trigger <n>` | Compaction trigger in tokens. Default: `190000`. |
+| `--trigger <n>` | Compaction trigger in tokens. Default: 95% of `--context`, rounded down (`190000` at `200000`). |
 | `--keep <n>` | Retained raw-context tokens. Default: `50000`. |
 | `--profile <name>` | DSH profile name. Required when more than one profile exists. |
 | `--create` | Allow `apply` to create missing configuration files. |
@@ -93,12 +93,13 @@ when a selected agent has no configuration file yet.
 | `--version` | Print the version. |
 | `--help` | Print help. |
 
-`--trigger` is an absolute token count. For the default 200K window, the
-default trigger is 190,000 (95% of 200,000). When you pass `--context` for a
-different window, each agent's native values are recomputed for that window,
-but the trigger default remains the absolute 190,000. Pass `--trigger`
-explicitly when you want a different absolute trigger; for example,
-`--context 300000 --trigger 285000` preserves the 95% ratio.
+`--trigger` is an absolute token count. When you omit it, the default is 95% of
+`--context`, rounded down: 190,000 on a 200,000-token window and 95,000 on a
+100,000-token window. Each agent's native values are then recomputed for that
+window. Pass `--trigger` explicitly when you want a different absolute trigger;
+for example, `--context 300000 --trigger 280000` uses 280,000 even though 95%
+would be 285,000. `--keep` remains 50,000 unless overridden and must be less
+than the trigger.
 
 Exit codes: `0` for success or an already-configured result, `1` for an error,
 and `2` for no actionable agents or a `--strict` partial-support result.
