@@ -165,6 +165,51 @@ test('atomicWrite updates a symlink target instead of replacing the link', { ski
   assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
 });
 
+test('applyTransaction rolls back the current entry when afterApply throws', (t) => {
+  const dir = tempDir(t);
+  const file = path.join(dir, 'settings.json');
+  fs.writeFileSync(file, 'old');
+  const adapter = {
+    apply: (ctx, plan) => writeWithBackup(plan.configPath, plan.nextContent, { fs, now: ctx.now }),
+  };
+  const seen = [];
+  assert.throws(() => applyTransaction([
+    {
+      agentId: 'a', configPath: file, adapter,
+      plan: { configPath: file, nextContent: 'new' }, ctx: { now: fixedNow },
+    },
+  ], {
+    fs,
+    now: fixedNow,
+    afterApply: (entry) => {
+      seen.push(entry.backupPath);
+      throw new Error('verify failed');
+    },
+  }), /verify failed/);
+  assert.equal(seen.length, 1);
+  assert.match(path.basename(seen[0]), /^settings\.json\.bak-agent-compact-/);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'old');
+});
+
+test('applyTransaction deletes a newly created current entry when afterApply throws', (t) => {
+  const dir = tempDir(t);
+  const file = path.join(dir, 'nested', 'settings.json');
+  const adapter = {
+    apply: (ctx, plan) => writeWithBackup(plan.configPath, plan.nextContent, { fs, now: ctx.now }),
+  };
+  assert.throws(() => applyTransaction([
+    {
+      agentId: 'a', configPath: file, adapter,
+      plan: { configPath: file, nextContent: 'new' }, ctx: { now: fixedNow },
+    },
+  ], {
+    fs,
+    now: fixedNow,
+    afterApply: () => { throw new Error('verify failed'); },
+  }), /verify failed/);
+  assert.equal(fs.existsSync(file), false);
+});
+
 test('applyTransaction reports applied entries', (t) => {
   const dir = tempDir(t);
   const file = path.join(dir, 'settings.json');

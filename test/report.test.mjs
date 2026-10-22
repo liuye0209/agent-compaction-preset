@@ -114,3 +114,87 @@ test('human report includes support and effective values', () => {
   assert.equal(human.includes('sk-test-not-real'), false);
   assert.equal(/\x1b\[/.test(human), false);
 });
+
+const verifyAgent = {
+  id: 'codex',
+  name: 'Codex CLI',
+  support: 'partial',
+  configPath: '/home/u/.codex/config.toml',
+  effective: { trigger: 190000, keep: null },
+  warnings: ['retention is fixed'],
+  ok: false,
+  status: 'mismatch',
+};
+
+test('human apply report lists applied entries and verification agents', () => {
+  const human = toHumanReport({
+    version: '0.1.0',
+    command: 'apply',
+    policy: { context: 200000, trigger: 190000, keep: 50000 },
+    applied: [
+      {
+        agentId: 'opencode',
+        configPath: '/home/u/.config/opencode/opencode.json',
+        backupPath: '/home/u/.config/opencode/opencode.json.bak-agent-compact-20261019-120000',
+      },
+      { agentId: 'gemini', configPath: '/home/u/.gemini/settings.json', backupPath: null },
+    ],
+    agents: [verifyAgent],
+  }, { color: false });
+
+  assert.match(human, /Applied:/);
+  assert.match(human, /opencode/);
+  assert.match(human, /config: \/home\/u\/\.config\/opencode\/opencode\.json/);
+  assert.match(human, /backup: \/home\/u\/\.config\/opencode\/opencode\.json\.bak-agent-compact-/);
+  assert.match(human, /gemini/);
+  assert.match(human, /backup: none/);
+  assert.match(human, /Verification:/);
+  assert.match(human, /Codex CLI \(codex\)/);
+  assert.match(human, /support: partial/);
+  assert.match(human, /status: mismatch/);
+  assert.match(human, /trigger 190000, keep N\/A/);
+  assert.match(human, /warning: retention is fixed/);
+});
+
+test('human verify report lists support, status, effective, and warnings', () => {
+  const human = toHumanReport({
+    version: '0.1.0',
+    command: 'verify',
+    policy: { context: 200000, trigger: 190000, keep: 50000 },
+    agents: [verifyAgent],
+  }, { color: false });
+
+  assert.match(human, /Verification:/);
+  assert.match(human, /Codex CLI \(codex\)/);
+  assert.match(human, /support: partial/);
+  assert.match(human, /status: mismatch/);
+  assert.match(human, /trigger 190000/);
+  assert.match(human, /warning: retention is fixed/);
+  assert.equal(human.includes('nextContent'), false);
+});
+
+test('human restore report lists restored paths and warnings without content', () => {
+  const human = toHumanReport({
+    version: '0.1.0',
+    command: 'restore',
+    restored: [
+      {
+        agentId: 'opencode',
+        configPath: '/home/u/.config/opencode/opencode.json',
+        backupPath: '/home/u/.config/opencode/opencode.json.bak-agent-compact-20261019-120000',
+        safetyBackupPath: '/home/u/.config/opencode/opencode.json.bak-agent-compact-before-restore-20261019-130000',
+        nextContent: '{"token":"sk-test-not-real"}',
+      },
+    ],
+    warnings: ['No backup found for DSH (dsh).'],
+  }, { color: false });
+
+  assert.match(human, /Restored:/);
+  assert.match(human, /opencode/);
+  assert.match(human, /config: \/home\/u\/\.config\/opencode\/opencode\.json/);
+  assert.match(human, /backup: \/home\/u\/\.config\/opencode\/opencode\.json\.bak-agent-compact-/);
+  assert.match(human, /safety backup: .*before-restore/);
+  assert.match(human, /warning: No backup found for DSH/);
+  assert.equal(human.includes('sk-test-not-real'), false);
+  assert.equal(human.includes('nextContent'), false);
+});
