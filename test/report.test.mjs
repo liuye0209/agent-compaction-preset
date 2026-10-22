@@ -89,6 +89,65 @@ test('JSON report removes nested content fields', () => {
   });
 });
 
+test('JSON report strips content keys from the whole result', () => {
+  const input = {
+    version: '0.1.0',
+    command: 'apply',
+    nextContent: 'top-secret',
+    applied: [
+      {
+        agentId: 'opencode',
+        configPath: '/config/opencode.json',
+        backupPath: '/config/opencode.json.bak-agent-compact-20261019-120000',
+        nextContent: 'secret-applied',
+        nested: {
+          currentContent: 'secret-nested',
+          list: [{ nextContent: 'secret-list' }],
+        },
+      },
+    ],
+    restored: [
+      {
+        agentId: 'gemini',
+        configPath: '/config/settings.json',
+        backupPath: '/config/settings.json.bak-agent-compact-20261019-120000',
+        safetyBackupPath: null,
+        currentContent: 'secret-restored',
+        nested: { nextContent: 'secret-restored-nested' },
+      },
+    ],
+  };
+  const json = toJsonReport(input);
+
+  assert.equal(json.includes('nextContent'), false);
+  assert.equal(json.includes('currentContent'), false);
+  assert.equal(json.includes('secret'), false);
+  assert.deepEqual(JSON.parse(json), {
+    version: '0.1.0',
+    command: 'apply',
+    applied: [
+      {
+        agentId: 'opencode',
+        configPath: '/config/opencode.json',
+        backupPath: '/config/opencode.json.bak-agent-compact-20261019-120000',
+        nested: { list: [{}] },
+      },
+    ],
+    restored: [
+      {
+        agentId: 'gemini',
+        configPath: '/config/settings.json',
+        backupPath: '/config/settings.json.bak-agent-compact-20261019-120000',
+        safetyBackupPath: null,
+        nested: {},
+      },
+    ],
+  });
+  assert.equal(input.nextContent, 'top-secret');
+  assert.equal(input.applied[0].nextContent, 'secret-applied');
+  assert.equal(input.restored[0].currentContent, 'secret-restored');
+});
+
 test('JSON report contains no secrets or nextContent', () => {
   const json = toJsonReport(result);
   assert.equal(json.includes('sk-test-not-real'), false);

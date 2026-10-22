@@ -78,6 +78,30 @@ test('apply --strict refuses partial agents before writing', async (t) => {
   assert.deepEqual(fs.readFileSync(codex), before);
 });
 
+test('apply preflight missing-config error wins over --strict', async (t) => {
+  const home = tempHome(t);
+  const io = makeIO();
+  const code = await runCli(['apply', '--strict', '--yes', '--agents', 'codex', '--json', '--home', home], io);
+  assert.equal(code, 1);
+  assert.match(io.err, /--create/);
+  assert.equal(fs.existsSync(path.join(home, '.codex', 'config.toml')), false);
+});
+
+test('apply aborts every agent when one plan requires --create', async (t) => {
+  const home = tempHome(t);
+  const opencode = writeHomeFile(
+    home, path.join('.config', 'opencode', 'opencode.json'), '{}\n',
+  );
+  const before = fs.readFileSync(opencode);
+  const io = makeIO();
+  const code = await runCli(['apply', '--yes', '--agents', 'opencode,codex', '--json', '--home', home], io);
+  assert.equal(code, 1);
+  assert.match(io.err, /--create/);
+  assert.deepEqual(fs.readFileSync(opencode), before);
+  assert.equal(backupsFor(opencode).length, 0);
+  assert.equal(fs.existsSync(path.join(home, '.codex', 'config.toml')), false);
+});
+
 test('apply without --yes refuses non-interactive writes', async (t) => {
   const home = tempHome(t);
   setup(home);

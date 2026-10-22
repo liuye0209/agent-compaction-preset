@@ -84,9 +84,11 @@ test('restoreBackup creates a before-restore safety copy and findLatestBackup ig
   fs.writeFileSync(file, 'current');
   const oldBackup = path.join(dir, 'settings.json.bak-agent-compact-20261019-110000');
   fs.writeFileSync(oldBackup, 'original');
+  const beforeRestore = fs.readFileSync(file);
   const { safetyBackupPath } = restoreBackup(oldBackup, file, { fs, now: fixedNow });
   assert.equal(fs.readFileSync(file, 'utf8'), 'original');
   assert.match(path.basename(safetyBackupPath), /before-restore/);
+  assert.deepEqual(fs.readFileSync(safetyBackupPath), beforeRestore);
   assert.equal(findLatestBackup(file, { fs }), oldBackup);
 });
 

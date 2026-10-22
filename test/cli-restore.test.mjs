@@ -41,6 +41,29 @@ test('restore --latest restores exact original bytes', async (t) => {
   assert.match(report.restored[0].safetyBackupPath, /before-restore/);
 });
 
+test('restore --latest restores a deleted config from its backup', async (t) => {
+  const home = tempHome(t);
+  const file = writeHomeFile(
+    home,
+    path.join('.gemini', 'settings.json'),
+    '{"theme":"light"}\n',
+  );
+  const original = fs.readFileSync(file);
+  const applied = makeIO();
+  assert.equal(
+    await runCli(['apply', '--yes', '--agents', 'gemini', '--json', '--home', home], applied),
+    0,
+    applied.err,
+  );
+  fs.rmSync(file);
+  const io = makeIO();
+  const code = await runCli(['restore', '--latest', '--yes', '--agents', 'gemini', '--json', '--home', home], io);
+  assert.equal(code, 0, io.err);
+  const report = JSON.parse(io.out);
+  assert.deepEqual(fs.readFileSync(file), original);
+  assert.equal(report.restored[0].safetyBackupPath, null);
+});
+
 test('restore --file restores an explicit backup', async (t) => {
   const home = tempHome(t);
   const file = writeHomeFile(home, path.join('.config', 'opencode', 'opencode.json'), '{}\n');
@@ -97,6 +120,20 @@ test('restore --file rejects a path without the backup suffix and does not write
   assert.match(io.err, /bak-agent-compact/);
   assert.deepEqual(fs.readFileSync(file), before);
   assert.deepEqual(backupFilesFor(file), []);
+});
+
+test('restore --file rejects a backup marker that is only in a directory component', async (t) => {
+  const home = tempHome(t);
+  const dir = path.join(home, 'backups.bak-agent-compact-20261019-120000');
+  fs.mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, 'opencode.json');
+  fs.writeFileSync(target, 'keep\n');
+  const io = makeIO();
+  const code = await runCli(['restore', '--file', target, '--yes', '--home', home], io);
+  assert.equal(code, 1);
+  assert.match(io.err, /bak-agent-compact/);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'keep\n');
+  assert.equal(fs.existsSync(path.join(home, 'backups')), false);
 });
 
 test('restore without --yes refuses non-interactive writes', async (t) => {
