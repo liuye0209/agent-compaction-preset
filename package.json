@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "description": "Cross-agent context compaction configuration preset",
   "type": "module",
+  "bin": { "agent-compact": "./bin/agent-compact.mjs" },
+  "files": ["bin", "lib", "presets", "README.md", "README.zh-CN.md", "LICENSE"],
   "engines": { "node": ">=20" },
   "scripts": { "test": "node --test" },
   "license": "MIT"

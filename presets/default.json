@@ -1,0 +1,12 @@
+{
+  "name": "default",
+  "policy": { "context": 200000, "trigger": 190000, "keep": 50000 },
+  "agents": {
+    "opencode": { "support": "full", "keys": ["compaction.auto", "compaction.keep.tokens", "compaction.buffer"] },
+    "dsh": { "support": "full", "keys": ["thresholdRatio", "headroomTokens", "maxTokens", "retainTokens"] },
+    "codex": { "support": "partial", "keys": ["model_context_window", "model_auto_compact_token_limit"] },
+    "claude": { "support": "partial", "keys": ["autoCompactEnabled", "autoCompactWindow"] },
+    "gemini": { "support": "partial", "keys": ["model.compressionThreshold"] },
+    "qwen": { "support": "partial", "keys": ["context.autoCompactThreshold"] }
+  }
+}
