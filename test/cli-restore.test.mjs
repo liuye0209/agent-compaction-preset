@@ -70,11 +70,102 @@ test('restore --file restores an explicit backup', async (t) => {
   const home = tempHome(t);
   const file = writeHomeFile(home, path.join('.config', 'opencode', 'opencode.json'), '{}\n');
   const backup = path.join(path.dirname(file), `${path.basename(file)}.bak-agent-compact-20261019-120000`);
-  fs.writeFileSync(backup, 'explicit\n');
+  fs.writeFileSync(backup, '{"explicit":true}\n');
   const io = makeIO();
   const code = await runCli(['restore', '--file', backup, '--yes', '--json', '--home', home], io);
   assert.equal(code, 0, io.err);
-  assert.equal(fs.readFileSync(file, 'utf8'), 'explicit\n');
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"explicit":true}\n');
+});
+
+test('restore rejects an invalid JSON backup before writing', async (t) => {
+  const home = tempHome(t);
+  const file = writeHomeFile(
+    home,
+    path.join('.config', 'opencode', 'opencode.json'),
+    '{"theme":"dark"}\n',
+  );
+  const before = fs.readFileSync(file);
+  const backup = path.join(
+    path.dirname(file),
+    `${path.basename(file)}.bak-agent-compact-20261019-120000`,
+  );
+  fs.writeFileSync(backup, '{"broken":\n');
+
+  const io = makeIO();
+  const code = await runCli(
+    ['restore', '--file', backup, '--yes', '--json', '--home', home],
+    io,
+  );
+  assert.equal(code, 1);
+  assert.match(io.err, /valid JSON|parse/i);
+  assert.equal(io.err.includes('"broken"'), false);
+  assert.deepEqual(fs.readFileSync(file), before);
+  assert.deepEqual(
+    backupFilesFor(file).filter((name) => name !== path.basename(backup)),
+    [],
+  );
+});
+
+test('restore rejects an invalid TOML backup before writing', async (t) => {
+  const home = tempHome(t);
+  const file = writeHomeFile(
+    home,
+    path.join('.codex', 'config.toml'),
+    'model = "deepseek-flash"\n',
+  );
+  const before = fs.readFileSync(file);
+  const backup = path.join(
+    path.dirname(file),
+    `${path.basename(file)}.bak-agent-compact-20261019-120000`,
+  );
+  fs.writeFileSync(backup, 'model = """\n');
+
+  const io = makeIO();
+  const code = await runCli(
+    ['restore', '--file', backup, '--yes', '--json', '--home', home],
+    io,
+  );
+  assert.equal(code, 1);
+  assert.match(io.err, /valid TOML|parse/i);
+  assert.deepEqual(fs.readFileSync(file), before);
+  assert.deepEqual(
+    backupFilesFor(file).filter((name) => name !== path.basename(backup)),
+    [],
+  );
+});
+
+test('restore --latest restores a valid DSH YAML backup', async (t) => {
+  const home = tempHome(t);
+  const file = writeHomeFile(
+    home,
+    path.join('.dsh', 'profiles', 'desktop', 'cordis.patch.yml'),
+    '[]\n',
+  );
+  const original = fs.readFileSync(file);
+  const applied = makeIO();
+  assert.equal(
+    await runCli(
+      [
+        'apply', '--yes', '--agents', 'dsh', '--profile', 'desktop',
+        '--json', '--home', home,
+      ],
+      applied,
+    ),
+    0,
+    applied.err,
+  );
+  assert.notDeepEqual(fs.readFileSync(file), original);
+
+  const io = makeIO();
+  const code = await runCli(
+    [
+      'restore', '--latest', '--yes', '--agents', 'dsh', '--profile', 'desktop',
+      '--json', '--home', home,
+    ],
+    io,
+  );
+  assert.equal(code, 0, io.err);
+  assert.deepEqual(fs.readFileSync(file), original);
 });
 
 test('restore with no backups exits 2', async (t) => {

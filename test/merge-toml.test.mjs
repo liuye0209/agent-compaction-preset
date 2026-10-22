@@ -372,3 +372,83 @@ test('aborts instead of rewriting a multiline target value', () => {
     /Ambiguous TOML.*array/i,
   );
 });
+
+test('quoted table headers may contain brackets', () => {
+  const text = [
+    'model = "deepseek-flash"',
+    '',
+    '[profiles."a[b]"]',
+    'model_context_window = 64000',
+    '',
+  ].join('\n');
+  const output = mergeTopLevelToml(text, {
+    model_auto_compact_token_limit: 190000,
+  });
+
+  assert.ok(
+    output.indexOf('model_auto_compact_token_limit = 190000') <
+      output.indexOf('[profiles."a[b]"]'),
+  );
+  assert.deepEqual(
+    findKeysInTables(text, ['model_context_window']),
+    [{ table: 'profiles."a[b]"', key: 'model_context_window', line: 4 }],
+  );
+  assert.deepEqual(readTopLevelTomlValues(text, ['model_context_window']), {
+    model_context_window: undefined,
+  });
+});
+
+test('rejects an unclosed value after target top-level keys', () => {
+  const text = [
+    'model_context_window = 200000',
+    'model_auto_compact_token_limit = 190000',
+    'model = """',
+    '',
+  ].join('\n');
+
+  assert.throws(
+    () =>
+      readTopLevelTomlValues(text, [
+        'model_context_window',
+        'model_auto_compact_token_limit',
+      ]),
+    /Ambiguous TOML.*multiline/i,
+  );
+});
+
+test('rejects an unclosed value after the first table', () => {
+  const text = [
+    'model_context_window = 200000',
+    'model_auto_compact_token_limit = 190000',
+    '',
+    '[profiles.small]',
+    'model = """',
+    '',
+  ].join('\n');
+
+  assert.throws(
+    () =>
+      readTopLevelTomlValues(text, [
+        'model_context_window',
+        'model_auto_compact_token_limit',
+      ]),
+    /Ambiguous TOML.*multiline/i,
+  );
+  assert.throws(
+    () => findKeysInTables(text, ['model_context_window']),
+    /Ambiguous TOML.*multiline/i,
+  );
+});
+
+test('rejects malformed table headers instead of treating them as top level', () => {
+  const text = 'model = "x"\n[profiles."a[b]\nmodel_context_window = 64000\n';
+
+  assert.throws(
+    () => readTopLevelTomlValues(text, ['model_context_window']),
+    /malformed table header/i,
+  );
+  assert.throws(
+    () => mergeTopLevelToml(text, { model_context_window: 200000 }),
+    /malformed table header/i,
+  );
+});

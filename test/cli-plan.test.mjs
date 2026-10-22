@@ -180,6 +180,37 @@ test('print --agent dsh does not require a detected profile', (t) => {
   assert.match(result.stdout, /retainTokens: 50000/);
 });
 
+test('print validates the Claude Code minimum window before rendering', (t) => {
+  const home = tempHome(t);
+  const result = run(
+    ['print', '--agent', 'claude', '--context', '100000', '--json'],
+    home,
+  );
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /Claude Code.*100000/i);
+  assert.match(result.stderr, /95000/);
+});
+
+test('print validates DSH retention against the effective trigger', (t) => {
+  const home = tempHome(t);
+  const invalid = run(
+    ['print', '--agent', 'dsh', '--context', '100000', '--keep', '94000'],
+    home,
+  );
+  assert.equal(invalid.status, 1);
+  assert.equal(invalid.stdout, '');
+  assert.match(invalid.stderr, /retain|retention/i);
+  assert.match(invalid.stderr, /91808/);
+
+  const valid = run(
+    ['print', '--agent', 'dsh', '--context', '100000', '--keep', '50000'],
+    home,
+  );
+  assert.equal(valid.status, 0, valid.stderr);
+  assert.match(valid.stdout, /retainTokens: 50000/);
+});
+
 test('plan rejects malformed JSON without echoing config content', (t) => {
   const home = tempHome(t);
   writeHomeFile(

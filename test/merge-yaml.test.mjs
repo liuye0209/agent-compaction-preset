@@ -55,6 +55,23 @@ test('rejects duplicate compaction-basic entries', () => {
   assert.throws(() => mergeDshCompactionBlock(input, config), /duplicate/i);
 });
 
+test('rejects entry-level node properties instead of appending a target', () => {
+  const input = [
+    '- &base id: compaction-basic',
+    '  config:',
+    '    auto: false',
+    '',
+  ].join('\n');
+  assert.throws(
+    () => mergeDshCompactionBlock(input, config),
+    /entry-level|node propert|unexpected structure/i,
+  );
+  assert.throws(
+    () => readDshCompactionConfig(input),
+    /entry-level|node propert|unexpected structure/i,
+  );
+});
+
 test('rejects flow-style config', () => {
   const input = [
     '- id: compaction-basic',

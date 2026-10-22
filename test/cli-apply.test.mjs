@@ -58,6 +58,33 @@ test('apply writes, backs up, verifies, and is idempotent', async (t) => {
   assert.equal(backupsFor(opencode).length, 1);
 });
 
+test('apply --create --agents dsh requires and honors --profile on a fresh home', async (t) => {
+  const home = tempHome(t);
+  const withoutProfile = makeIO();
+  const missing = await runCli(
+    ['apply', '--yes', '--create', '--agents', 'dsh', '--json', '--home', home],
+    withoutProfile,
+  );
+  assert.equal(missing, 1);
+  assert.match(withoutProfile.err, /--profile/);
+  assert.equal(fs.existsSync(path.join(home, '.dsh')), false);
+
+  const withProfile = makeIO();
+  const created = await runCli(
+    [
+      'apply', '--yes', '--create', '--agents', 'dsh',
+      '--profile', 'laptop', '--json', '--home', home,
+    ],
+    withProfile,
+  );
+  assert.equal(created, 0, withProfile.err);
+  const report = JSON.parse(withProfile.out);
+  const file = path.join(home, '.dsh', 'profiles', 'laptop', 'cordis.patch.yml');
+  assert.equal(report.applied[0].configPath, file);
+  assert.equal(report.applied[0].backupPath, null);
+  assert.match(fs.readFileSync(file, 'utf8'), /retainTokens: 50000/);
+});
+
 test('apply --create creates a missing config without a backup', async (t) => {
   const home = tempHome(t);
   const io = makeIO();

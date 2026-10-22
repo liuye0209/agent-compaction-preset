@@ -35,7 +35,7 @@ test('preset metadata matches the registry and exact keys', () => {
     'compaction.auto', 'compaction.keep.tokens', 'compaction.buffer',
   ]);
   assert.deepEqual(preset.agents.dsh.keys, [
-    'thresholdRatio', 'headroomTokens', 'maxTokens', 'retainTokens',
+    'auto', 'thresholdRatio', 'headroomTokens', 'maxTokens', 'retainTokens',
   ]);
   assert.deepEqual(preset.agents.codex.keys, [
     'model_context_window', 'model_auto_compact_token_limit',

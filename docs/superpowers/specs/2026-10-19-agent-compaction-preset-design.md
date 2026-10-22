@@ -260,7 +260,8 @@ actual value and a warning. The installer must not silently clamp.
 - Profile root: `DSH_HOME` or `~/.dsh`.
 - Find `profiles/*/cordis.patch.yml`.
 - If exactly one profile exists, use it.
-- If multiple profiles exist, require `--profile <name>`.
+- If no profile or multiple profiles exist, require `--profile <name>`.
+  `--profile` plus `--create` may target a new profile.
 - Target block:
 
 ```yaml
@@ -382,7 +383,7 @@ agent-compact --help
 | `--context <n>` | Model context window. Default: 200000. |
 | `--trigger <n>` | Trigger tokens. Default: 190000. |
 | `--keep <n>` | Retained raw-context tokens. Default: 50000. |
-| `--profile <name>` | DSH profile. Required when multiple profiles exist. |
+| `--profile <name>` | DSH profile. Required when no profile or multiple profiles exist. |
 | `--yes` | Skip interactive confirmation for `apply` and `restore`. |
 | `--create` | Create a missing config file from a minimal template. |
 | `--strict` | Exit non-zero if any selected agent is partial. |
@@ -509,7 +510,8 @@ values.
   agent.
 - `restore --file <path>` restores one explicit backup.
 - Before restoring, create a safety backup of the current file.
-- Restore exact bytes, then verify parseability.
+- Validate every selected backup for parseability before writing anything, then
+  restore the exact bytes.
 - Report the restored path and the safety backup path.
 
 ## 11. Error Handling
@@ -518,7 +520,8 @@ values.
 - Invalid JSON/TOML/YAML: abort that agent and, during `apply`, abort the whole
   transaction.
 - Permission denied: report the path and the OS error; do not retry blindly.
-- DSH multiple profiles without `--profile`: abort with the profile list.
+- DSH no profile or multiple profiles without `--profile`: abort with guidance
+  (and the profile list when there are multiple).
 - DSH duplicate `compaction-basic` entries: abort with both line numbers.
 - Claude version too old: write only the boolean, warn, and mark the agent
   `partial`.

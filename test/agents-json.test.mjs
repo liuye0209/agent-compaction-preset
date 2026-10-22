@@ -288,16 +288,16 @@ test('Claude Code verify tolerates a missing window on old versions', (t) => {
   });
 });
 
-test('Claude Code verify validates a window present on an old version', (t) => {
+test('Claude Code verify ignores a window present on an old version', (t) => {
   const home = tempHome(t);
   writeHomeFile(home, claudePath, `${JSON.stringify({
     autoCompactEnabled: true,
     autoCompactWindow: 180000,
   }, null, 2)}\n`);
   const result = claude.verify(claudeCtx(home, '2.1.200'), policy);
-  assert.equal(result.effective.trigger, 180000);
-  assert.equal(result.ok, false);
-  assert.match(result.warnings.join(' '), /autoCompactWindow/);
+  assert.equal(result.effective.trigger, null);
+  assert.equal(result.ok, true);
+  assert.match(result.warnings.join(' '), /autoCompactWindow.*ignored|2\.1\.288/i);
 });
 
 test('Gemini writes the new threshold key and reports 190K', (t) => {

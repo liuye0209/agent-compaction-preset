@@ -204,7 +204,7 @@ test('DSH flow-style config returns a manual plan and never writes', (t) => {
 
   const verified = dsh.verify(ctx, policy);
   assert.equal(verified.ok, false);
-  assert.deepEqual(verified.effective, { trigger: null, keep: 50000 });
+  assert.deepEqual(verified.effective, { trigger: null, keep: null });
   assert.match(verified.warnings.join(' '), /manual|flow|structure/i);
 });
 
@@ -244,10 +244,56 @@ test('DSH verify reports mismatches and computes the configured trigger', (t) =>
   );
   const result = dsh.verify(makeCtx(home), policy);
   assert.equal(result.ok, false);
-  assert.deepEqual(result.effective, { trigger: 160000, keep: 50000 });
+  assert.deepEqual(result.effective, { trigger: 160000, keep: 40000 });
   assert.match(result.warnings.join(' '), /auto/);
   assert.match(result.warnings.join(' '), /thresholdRatio/);
   assert.match(result.warnings.join(' '), /retainTokens/);
+});
+
+test('DSH verify reports missing retention as null', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(
+    home,
+    desktop,
+    [
+      '- id: compaction-basic',
+      '  config:',
+      '    auto: true',
+      '    thresholdRatio: 0.95',
+      '    headroomTokens: 0',
+      '    maxTokens: 8192',
+      '',
+    ].join('\n'),
+  );
+  const result = dsh.verify(makeCtx(home), policy);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.effective, { trigger: 190000, keep: null });
+  assert.match(result.warnings.join(' '), /retainTokens is missing/);
+});
+
+test('DSH verify rejects retention at or above the effective trigger', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(
+    home,
+    desktop,
+    [
+      '- id: compaction-basic',
+      '  config:',
+      '    auto: true',
+      '    thresholdRatio: 0.95',
+      '    headroomTokens: 0',
+      '    maxTokens: 8192',
+      '    retainTokens: 94000',
+      '',
+    ].join('\n'),
+  );
+  const result = dsh.verify(
+    makeCtx(home),
+    resolvePolicy({ context: 100000, trigger: 95000, keep: 94000 }),
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.effective, { trigger: 91808, keep: 94000 });
+  assert.match(result.warnings.join(' '), /retainTokens|retention|effective trigger/i);
 });
 
 test('DSH verify reports a missing file for an explicit profile', (t) => {
@@ -257,7 +303,7 @@ test('DSH verify reports a missing file for an explicit profile', (t) => {
   });
   const result = dsh.verify(makeCtx(home, { profile: 'desktop' }), policy);
   assert.equal(result.ok, false);
-  assert.deepEqual(result.effective, { trigger: null, keep: 50000 });
+  assert.deepEqual(result.effective, { trigger: null, keep: null });
   assert.match(result.warnings.join(' '), /does not exist/);
 });
 
@@ -575,6 +621,10 @@ const manualStructures = [
   [
     'a tagged direct config key',
     ['- id: compaction-basic', '  config:', '    !!str auto: false', ''],
+  ],
+  [
+    'an entry-level anchor',
+    ['- &base id: compaction-basic', '  config:', '    auto: false', ''],
   ],
 ];
 

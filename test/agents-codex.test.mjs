@@ -175,6 +175,93 @@ test('Codex verify reports mismatched and missing top-level values', (t) => {
   assert.match(missing.warnings.join(' '), /model_auto_compact_token_limit is missing/);
 });
 
+test('Codex plan inserts target keys before a quoted profile table', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(
+    home,
+    relative,
+    [
+      'model = "deepseek-flash"',
+      '',
+      '[profiles."a[b]"]',
+      'model_context_window = 64000',
+      '',
+    ].join('\n'),
+  );
+  const plan = codex.plan(makeCtx(home), policy);
+
+  assert.equal(plan.status, 'planned');
+  assert.match(plan.warnings.join(' '), /a\[b\]/);
+  assert.ok(
+    plan.nextContent.indexOf('model_context_window = 200000') <
+      plan.nextContent.indexOf('[profiles."a[b]"]'),
+  );
+  assert.match(
+    plan.nextContent,
+    /\[profiles\."a\[b\]"\]\nmodel_context_window = 64000/,
+  );
+});
+
+test('Codex plan rejects an unclosed TOML value after matching keys', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(
+    home,
+    relative,
+    [
+      'model_context_window = 200000',
+      'model_auto_compact_token_limit = 190000',
+      'model = """',
+      '',
+    ].join('\n'),
+  );
+
+  assert.throws(
+    () => codex.plan(makeCtx(home), policy),
+    /Ambiguous TOML.*multiline/i,
+  );
+});
+
+test('Codex verify rejects an unclosed TOML value after matching keys', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(
+    home,
+    relative,
+    [
+      'model_context_window = 200000',
+      'model_auto_compact_token_limit = 190000',
+      '',
+      '[profiles.small]',
+      'model = """',
+      '',
+    ].join('\n'),
+  );
+
+  assert.throws(
+    () => codex.verify(makeCtx(home), policy),
+    /Ambiguous TOML.*multiline/i,
+  );
+});
+
+test('Codex verify warns about target keys inside profile tables', (t) => {
+  const home = tempHome(t);
+  writeHomeFile(
+    home,
+    relative,
+    [
+      'model_context_window = 200000',
+      'model_auto_compact_token_limit = 190000',
+      '',
+      '[profiles.small]',
+      'model_auto_compact_token_limit = 32000',
+      '',
+    ].join('\n'),
+  );
+  const result = codex.verify(makeCtx(home), policy);
+
+  assert.equal(result.ok, true);
+  assert.match(result.warnings.join(' '), /profiles\.small/);
+});
+
 test('Codex print returns the two-line TOML snippet', (t) => {
   const home = tempHome(t);
   assert.equal(

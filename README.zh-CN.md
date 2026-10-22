@@ -2,14 +2,14 @@
 
 `agent-compaction-preset` 用一套共享策略，为多个命令行编程代理写入原生的上下文压缩设置。它不代理模型请求，不安装运行时插件，也不管理服务商账户或 API 密钥。它只修改目标压缩键，不会打印无关的配置值。它是一个零运行时依赖的 Node.js CLI（要求 Node.js 20 或更高版本），只修改这些代理已经在使用的配置文件。
 
-默认策略面向 200,000 token 的模型窗口，自动压缩触发阈值为 190,000 token，压缩后保留 50,000 token 的原始上下文。OpenCode 和 DSH 可以应用触发阈值和保留量；上下文窗口是用于推导原生设置的输入，不会写入这些文件。Codex CLI、Claude Code、Gemini CLI 和 Qwen Code 没有用户可配置的保留量设置，因此按部分支持处理：工具会设置它们的触发阈值，并把保留量报告为 `N/A`，而不会假装存在 50K 保留量。
+默认策略面向 200,000 token 的模型窗口，自动压缩触发阈值为 190,000 token，压缩后保留 50,000 token 的原始上下文。OpenCode 和 DSH 可以应用触发阈值和保留量；对它们而言，上下文窗口是用于推导原生设置的输入。Codex CLI 还会把上下文窗口写入 `model_context_window`。Claude Code、Gemini CLI 和 Qwen Code 没有用户可配置的保留量设置，因此按部分支持处理：工具会设置它们的触发阈值，并把保留量报告为 `N/A`，而不会假装存在 50K 保留量。
 
 ## 1. 能力矩阵
 
 | 代理 | 支持级别 | 触发设置 | 保留设置 | 配置文件 |
 |---|---|---|---|---|
 | OpenCode | `full` | `compaction.auto: true`、`compaction.buffer: 10000`（在 200K 窗口上有效触发为 190K） | `compaction.keep.tokens: 50000` | `~/.config/opencode/opencode.json` |
-| DSH | `full` | `thresholdRatio: 0.95`、`headroomTokens: 0`、`maxTokens: 8192`（在 200K 窗口上有效触发为 190K） | `retainTokens: 50000` | `~/.dsh/profiles/<profile>/cordis.patch.yml` |
+| DSH | `full` | `auto: true`、`thresholdRatio: 0.95`、`headroomTokens: 0`、`maxTokens: 8192`（在 200K 窗口上有效触发为 190K） | `retainTokens: 50000` | `~/.dsh/profiles/<profile>/cordis.patch.yml` |
 | Codex CLI | `partial` | `model_context_window = 200000`、`model_auto_compact_token_limit = 190000` | `N/A` | `~/.codex/config.toml` |
 | Claude Code | `partial` | `autoCompactEnabled: true`、`autoCompactWindow: 190000`（v2.1.288+） | `N/A` | `~/.claude/settings.json` |
 | Gemini CLI | `partial` | `model.compressionThreshold: 0.95` | `N/A` | `~/.gemini/settings.json` |
@@ -57,7 +57,7 @@ node bin/agent-compact.mjs restore --latest --yes
 | `--context <n>` | 模型上下文窗口大小（token）。默认：`200000`。 |
 | `--trigger <n>` | 压缩触发阈值（token）。默认：`--context` 的 95%，向下取整（`200000` 时为 `190000`）。 |
 | `--keep <n>` | 保留的原始上下文 token 数。默认：`50000`。 |
-| `--profile <name>` | DSH profile 名称。存在多个 profile 时必填。 |
+| `--profile <name>` | DSH profile 名称。当不存在 profile 或存在多个 profile 时，DSH 的 `plan`/`apply`/`verify` 必须提供；在全新主目录上运行 `apply --create --agents dsh` 也需要它。 |
 | `--create` | 允许 `apply` 创建缺失的配置文件。 |
 | `--strict` | 当所选代理包含部分支持时，以退出码 2 结束。 |
 | `--yes` | 跳过 `apply` 和 `restore` 的交互确认。 |
@@ -156,7 +156,7 @@ Qwen Code（`~/.qwen/settings.json`）：
 - **完整支持（OpenCode、DSH）：** 同时配置触发阈值和原生保留预算。在默认策略下，`verify` 报告有效触发阈值为 190,000，保留量为 50,000。
 - **部分支持（Codex CLI、Claude Code、Gemini CLI、Qwen Code）：** 只配置触发阈值，没有用户可配置的保留量设置。人类可读报告显示 `keep N/A`；JSON 输出中的 `keep` 为 `null`。不会为这些代理写入或声称 50K 保留量。
 
-当部分支持应当使自动化运行失败时，使用 `--strict`。只要所选代理中包含部分支持，`plan`、`apply` 和 `verify` 就会返回退出码 2；更早的预检错误仍返回退出码 1。
+当部分支持应当使自动化运行失败时，使用 `--strict`。对 `plan` 和 `apply`，只要所选代理中包含部分支持，就会返回退出码 2。对 `verify`，检查失败会优先返回退出码 1，`--strict` 不会覆盖它；只有在所有检查都通过、但所选代理包含部分支持时，才返回 2。更早的预检错误仍返回退出码 1。
 
 ## 6. 备份、验证和恢复
 
@@ -179,7 +179,7 @@ Qwen Code（`~/.qwen/settings.json`）：
 <file>.bak-agent-compact-before-restore-YYYYMMDD-HHmmss
 ```
 
-并使用相同的数字后缀冲突处理。如果目标不存在，它会从备份重新创建目标，且不会创建安全备份。恢复会写入所选备份的确切字节。恢复按备份、按文件依次进行，不是多文件原子事务。安全备份使每个现有文件的恢复都可以撤销；重新创建的不存在文件如有需要可以删除。
+并使用相同的数字后缀冲突处理。如果目标不存在，它会从备份重新创建目标，且不会创建安全备份。在写入任何内容之前，每个所选备份都会按 JSON、TOML 或 DSH YAML 检查可解析性；格式错误的备份会中止恢复，并保持所有目标不变。随后恢复会写入所选备份的确切字节。恢复按备份、按文件依次进行，不是多文件原子事务。安全备份使每个现有文件的恢复都可以撤销；重新创建的不存在文件如有需要可以删除。
 
 ## 7. OpenCode JSONC 手动模板
 
@@ -206,12 +206,12 @@ Qwen Code（`~/.qwen/settings.json`）：
 
 1. **在 200K 模型上使用 250K 触发阈值是不可能的。** 触发阈值必须小于上下文窗口。默认的 190,000 在 200,000 token 模型上留下 10,000 token 余量。
 2. **比例设置是相对的。** Gemini CLI 和 Qwen Code 使用 `trigger / context`（默认 0.95）；DSH 使用 `thresholdRatio: 0.95`。OpenCode 的 `buffer` 是绝对差值。单一全局配置无法为不同模型窗口在基于比例的代理中同时指定不同的绝对触发阈值。需要时请按窗口传入 `--context` 和 `--trigger`。
-3. **Claude Code 有最小窗口和版本限制。** `autoCompactWindow` 至少为 100,000 token；低于该值时，工具拒绝写入窗口并说明原因。低于 v2.1.288 的 Claude Code 只支持 `autoCompactEnabled` 布尔值，不支持 `autoCompactWindow`。
+3. **Claude Code 有最小窗口和版本限制。** `autoCompactWindow` 至少为 100,000 token；低于该值时，`plan`、`apply` 和 `print` 会拒绝写入或渲染窗口并说明原因。低于 v2.1.288 的 Claude Code 只支持 `autoCompactEnabled` 布尔值，不支持 `autoCompactWindow`。
 4. **DSH 有摘要输出上限。** 工具写入 `maxTokens: 8192` 和 `headroomTokens: 0`，因为当 headroom 为零时 DSH 要求正的输出上限。有效触发阈值会被该上限降低：`floor(min(context × ratio, context - maxTokens - headroomTokens))`。默认的 200K/0.95 情况正好是 190,000，因为 `200000 - 8192 = 191808`；更大的上限会使有效触发阈值提前。
 5. **Gemini CLI 和 Qwen Code 可能应用内部阶梯或上限。** Gemini 的压缩阈值是目标值，Qwen Code 使用内部 warn/auto/hard 压缩阶梯。`verify` 报告配置的目标值，而不是运行时硬性保证。Gemini 的旧键会被处理并给出迁移警告，Qwen 的已弃用键会被 Qwen 本身忽略。
 6. **部分文件只能手动处理。** OpenCode 的 `.jsonc` 注释永远不会被自动重写，DSH 的流式或歧义 YAML 结构也不会被自动编辑。请自行应用打印出的模板。
-7. **Codex profile 覆盖不会被修改。** 工具写入顶层键；`[profiles.*]` 或其他表中的同名键可能优先。存在这些键时，计划会警告。
-8. **DSH profile 选择可能产生歧义。** 存在多个 profile 时，请传入 `--profile <name>`。重复的 `compaction-basic` 条目会中止；流式 YAML 和歧义结构会回退到手动模板，而不是猜测。
+7. **Codex profile 覆盖不会被修改。** 工具写入顶层键；`[profiles.*]` 或其他表中的同名键可能优先。存在这些键时，`plan` 和 `verify` 都会警告。
+8. **DSH profile 选择可能产生歧义。** 当不存在 profile 或存在多个 profile 时，请为 `plan`、`apply` 或 `verify` 传入 `--profile <name>`。在全新主目录上运行 `apply --create --agents dsh` 也需要显式指定 profile。重复的 `compaction-basic` 条目会中止；流式 YAML 和歧义结构会回退到手动模板，而不是猜测。
 9. **v0.1.0 不支持：** Cursor、Cline/Roo、Aider、Continue、Copilot CLI 和 IDE 扩展。其中一些没有全局压缩阈值，或者没有基于摘要的压缩设置。
 10. **优先通过 GitHub 发布。** 此版本从 GitHub 仓库分发，不发布到 npm。
 

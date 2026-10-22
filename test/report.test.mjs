@@ -174,6 +174,27 @@ test('human report includes support and effective values', () => {
   assert.equal(/\x1b\[/.test(human), false);
 });
 
+test('human plan redacts non-scalar target values and caps display', () => {
+  const human = toHumanReport(
+    {
+      ...result,
+      agents: [
+        {
+          ...plan,
+          changes: [
+            { key: 'secret', from: 'sk-test-not-real', to: 'x'.repeat(500) },
+          ],
+        },
+      ],
+    },
+    { color: false },
+  );
+
+  assert.match(human, /secret: <redacted> -> <redacted>/);
+  assert.equal(human.includes('sk-test-not-real'), false);
+  assert.equal(human.includes('x'.repeat(100)), false);
+});
+
 const verifyAgent = {
   id: 'codex',
   name: 'Codex CLI',

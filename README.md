@@ -9,19 +9,19 @@ configuration files the agents already use.
 
 The default policy targets a 200,000-token model window with a 190,000-token
 automatic compaction trigger and 50,000 tokens of retained raw context after
-compaction. OpenCode and DSH can apply both the trigger and retention; the
-context window is an input used to derive native settings, not a value written
-to these files. Codex CLI, Claude Code,
-Gemini CLI, and Qwen Code expose no user-configurable retention setting, so they
-are supported as partial: the tool sets their trigger and reports retention as
-`N/A` instead of pretending a 50K retention value exists.
+compaction. OpenCode and DSH can apply both the trigger and retention; for them,
+the context window is an input used to derive native settings. Codex CLI also
+writes the window as `model_context_window`. Claude Code, Gemini CLI, and Qwen
+Code expose no user-configurable retention setting, so they are supported as
+partial: the tool sets their trigger and reports retention as `N/A` instead of
+pretending a 50K retention value exists.
 
 ## 1. Capability matrix
 
 | Agent | Support | Trigger | Retention | Config file |
 |---|---|---|---|---|
 | OpenCode | `full` | `compaction.auto: true`, `compaction.buffer: 10000` (190K effective on a 200K window) | `compaction.keep.tokens: 50000` | `~/.config/opencode/opencode.json` |
-| DSH | `full` | `thresholdRatio: 0.95`, `headroomTokens: 0`, `maxTokens: 8192` (190K effective on a 200K window) | `retainTokens: 50000` | `~/.dsh/profiles/<profile>/cordis.patch.yml` |
+| DSH | `full` | `auto: true`, `thresholdRatio: 0.95`, `headroomTokens: 0`, `maxTokens: 8192` (190K effective on a 200K window) | `retainTokens: 50000` | `~/.dsh/profiles/<profile>/cordis.patch.yml` |
 | Codex CLI | `partial` | `model_context_window = 200000`, `model_auto_compact_token_limit = 190000` | `N/A` | `~/.codex/config.toml` |
 | Claude Code | `partial` | `autoCompactEnabled: true`, `autoCompactWindow: 190000` (v2.1.288+) | `N/A` | `~/.claude/settings.json` |
 | Gemini CLI | `partial` | `model.compressionThreshold: 0.95` | `N/A` | `~/.gemini/settings.json` |
@@ -84,7 +84,7 @@ when a selected agent has no configuration file yet.
 | `--context <n>` | Model context window in tokens. Default: `200000`. |
 | `--trigger <n>` | Compaction trigger in tokens. Default: 95% of `--context`, rounded down (`190000` at `200000`). |
 | `--keep <n>` | Retained raw-context tokens. Default: `50000`. |
-| `--profile <name>` | DSH profile name. Required when more than one profile exists. |
+| `--profile <name>` | DSH profile name. Required for DSH `plan`/`apply`/`verify` when no profile or more than one profile exists; `apply --create --agents dsh` needs it on a fresh home. |
 | `--create` | Allow `apply` to create missing configuration files. |
 | `--strict` | Exit with code 2 when a selected agent has partial support. |
 | `--yes` | Skip the interactive confirmation for `apply` and `restore`. |
@@ -213,9 +213,11 @@ inside Qwen's internal warn/auto/hard ladder, not a guarantee.
   report prints `keep N/A`; JSON output uses `null` for `keep`. No 50K
   retention value is written or claimed for these agents.
 
-Use `--strict` in automation when partial support should fail the run. It
-returns exit code 2 for `plan`, `apply`, and `verify` when any selected agent is
-partial; earlier preflight errors still exit 1.
+Use `--strict` in automation when partial support should fail the run. For
+`plan` and `apply`, it returns exit code 2 when any selected agent is partial.
+For `verify`, a failed check returns exit code 1 before `--strict` is considered;
+`--strict` returns 2 only when all checks pass but a selected agent is partial.
+Earlier preflight errors still exit 1.
 
 ## 6. Backup, verify, and restore
 
@@ -250,11 +252,13 @@ file:
 ```
 
 with the same numeric-suffix collision handling. If the target is missing, it
-is recreated from the backup and no safety backup is created. Restoration
-writes the exact bytes from the chosen backup. Restore is performed per backup
-and per file, sequentially; it is not an atomic multi-file transaction. A
-safety backup makes each existing-file restore reversible; a recreated missing
-file can be removed if needed.
+is recreated from the backup and no safety backup is created. Before writing
+anything, every selected backup is checked for parseability as JSON, TOML, or
+DSH YAML; a malformed backup aborts the restore and leaves every target
+unchanged. Restoration then writes the exact bytes from the chosen backup.
+Restore is performed per backup and per file, sequentially; it is not an atomic
+multi-file transaction. A safety backup makes each existing-file restore
+reversible; a recreated missing file can be removed if needed.
 
 ## 7. Manual template for OpenCode JSONC
 
@@ -296,10 +300,10 @@ into the profile's `cordis.patch.yml` by hand.
    cannot target different absolute triggers for different model windows in
    ratio-based agents. Use `--context` and `--trigger` per run when needed.
 3. **Claude Code has a minimum window and version limit.**
-   `autoCompactWindow` must be at least 100,000 tokens; below that, the tool
-   refuses to write the window and explains why. Claude Code versions older
-   than v2.1.288 support only the `autoCompactEnabled` boolean, not
-   `autoCompactWindow`.
+   `autoCompactWindow` must be at least 100,000 tokens; below that, `plan`,
+   `apply`, and `print` refuse to write or render the window and explain why.
+   Claude Code versions older than v2.1.288 support only the
+   `autoCompactEnabled` boolean, not `autoCompactWindow`.
 4. **DSH has a summarization output cap.** The tool writes
    `maxTokens: 8192` and `headroomTokens: 0` because DSH requires a positive
    output cap when headroom is zero. The effective trigger is reduced by that
@@ -316,12 +320,13 @@ into the profile's `cordis.patch.yml` by hand.
    rewritten, and DSH YAML with flow-style or ambiguous structures is not edited
    automatically. Apply the printed template yourself.
 7. **Codex profile overrides are not modified.** Top-level keys are written;
-   same-named keys in `[profiles.*]` or other tables may take precedence. The
-   plan warns when they are present.
-8. **DSH profile selection can be ambiguous.** If more than one profile exists,
-   pass `--profile <name>`. Duplicate `compaction-basic` entries abort; flow-style
-   YAML and ambiguous structures fall back to a manual template rather than
-   guessing.
+   same-named keys in `[profiles.*]` or other tables may take precedence. Both
+   `plan` and `verify` warn when they are present.
+8. **DSH profile selection can be ambiguous.** If no profile or more than one
+   profile exists, pass `--profile <name>` to `plan`, `apply`, or `verify`.
+   `apply --create --agents dsh` also needs an explicit profile on a fresh home.
+   Duplicate `compaction-basic` entries abort; flow-style YAML and ambiguous
+   structures fall back to a manual template rather than guessing.
 9. **Out of scope for v0.1.0:** Cursor, Cline/Roo, Aider, Continue, Copilot CLI,
    and IDE extensions. Several have no global compaction threshold or no
    summarization-based compaction setting.

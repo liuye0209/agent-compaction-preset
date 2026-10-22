@@ -147,6 +147,41 @@ test('applyTransaction skips noop plans and deletes newly created files on rollb
   assert.equal(fs.existsSync(created), false);
 });
 
+test('applyTransaction runs afterApply for noop plans and rolls back earlier writes', (t) => {
+  const dir = tempDir(t);
+  const file = path.join(dir, 'written.json');
+  fs.writeFileSync(file, 'old');
+  const creator = {
+    agentId: 'creator',
+    configPath: file,
+    adapter: {
+      apply: (ctx, plan) => writeWithBackup(plan.configPath, plan.nextContent, { fs, now: ctx.now }),
+    },
+    plan: { configPath: file, nextContent: 'new' },
+    ctx: { now: fixedNow },
+  };
+  const noop = {
+    agentId: 'noop',
+    configPath: path.join(dir, 'noop.json'),
+    adapter: { apply: () => { throw new Error('noop adapter must not run'); } },
+    plan: { status: 'noop', configPath: path.join(dir, 'noop.json') },
+    ctx: { now: fixedNow },
+  };
+
+  assert.throws(
+    () =>
+      applyTransaction([creator, noop], {
+        fs,
+        now: fixedNow,
+        afterApply: (entry) => {
+          if (entry.agentId === 'noop') throw new Error('noop verification failed');
+        },
+      }),
+    /noop verification failed/,
+  );
+  assert.equal(fs.readFileSync(file, 'utf8'), 'old');
+});
+
 test('atomicWrite preserves the POSIX mode when replacing a file', { skip: process.platform === 'win32' }, (t) => {
   const dir = tempDir(t);
   const file = path.join(dir, 'settings.json');
@@ -154,6 +189,25 @@ test('atomicWrite preserves the POSIX mode when replacing a file', { skip: proce
   fs.chmodSync(file, 0o600);
   atomicWrite(file, 'new', { fs });
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
+test('atomicWrite creates a new file with owner-only permissions', { skip: process.platform === 'win32' }, (t) => {
+  const dir = tempDir(t);
+  const file = path.join(dir, 'settings.json');
+  atomicWrite(file, 'new', { fs });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
+test('restoreExact preserves the backup mode for a missing target', { skip: process.platform === 'win32' }, (t) => {
+  const dir = tempDir(t);
+  const file = path.join(dir, 'settings.json');
+  const backup = path.join(dir, 'settings.json.bak-agent-compact-20261019-120000');
+  fs.writeFileSync(backup, 'original');
+  fs.chmodSync(backup, 0o640);
+
+  restoreExact(backup, file, { fs });
+  assert.equal(fs.readFileSync(file, 'utf8'), 'original');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o640);
 });
 
 test('atomicWrite updates a symlink target instead of replacing the link', { skip: process.platform === 'win32' }, (t) => {
