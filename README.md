@@ -9,7 +9,9 @@ configuration files the agents already use.
 
 The default policy targets a 200,000-token model window with a 190,000-token
 automatic compaction trigger and 50,000 tokens of retained raw context after
-compaction. OpenCode and DSH can apply all three values. Codex CLI, Claude Code,
+compaction. OpenCode and DSH can apply both the trigger and retention; the
+context window is an input used to derive native settings, not a value written
+to these files. Codex CLI, Claude Code,
 Gemini CLI, and Qwen Code expose no user-configurable retention setting, so they
 are supported as partial: the tool sets their trigger and reports retention as
 `N/A` instead of pretending a 50K retention value exists.
@@ -34,15 +36,16 @@ Path and environment overrides:
 
 - OpenCode uses `$XDG_CONFIG_HOME/opencode/opencode.json` when
   `XDG_CONFIG_HOME` is set, otherwise the path in the table. A sibling
-  `opencode.jsonc` is also detected; see sections 8 and 9.
+  `opencode.jsonc` is also detected; see sections 7 and 8.
 - DSH uses `$DSH_HOME/profiles/<profile>/cordis.patch.yml` when `DSH_HOME` is
   set, otherwise `~/.dsh`.
 - Codex uses `$CODEX_HOME/config.toml` when `CODEX_HOME` is set.
 - Claude Code uses `$CLAUDE_CONFIG_DIR/settings.json` when
   `CLAUDE_CONFIG_DIR` is set.
-- `--home <path>` overrides the home directory for every agent, and
-  `AGENT_COMPACT_HOME` is the environment-variable equivalent. `--home` takes
-  precedence. This is intended for testing and portable use.
+- `--home <path>` sets the base home directory; `AGENT_COMPACT_HOME` is the
+  environment-variable equivalent and `--home` wins over it. The per-agent
+  variables above still take precedence for their own roots. This is intended
+  for testing and portable use.
 
 ## 2. Quick start
 
@@ -99,7 +102,10 @@ when a selected agent has no configuration file yet.
 window. Pass `--trigger` explicitly when you want a different absolute trigger;
 for example, `--context 300000 --trigger 280000` uses 280,000 even though 95%
 would be 285,000. `--keep` remains 50,000 unless overridden and must be less
-than the trigger.
+than the trigger. For DSH it must be less than DSH's effective trigger, which
+can be lower because of `maxTokens`/`headroomTokens`; for example,
+`--context 100000` gives a 95,000 trigger but a 91,808 effective DSH trigger,
+so `--keep 94000` is rejected.
 
 Exit codes: `0` for success or an already-configured result, `1` for an error,
 and `2` for no actionable agents or a `--strict` partial-support result.
@@ -225,9 +231,10 @@ created new has no source backup; the report shows `backup: none`.
 
 `apply` is all-or-nothing for the selected run. It validates every plan before
 writing, backs up and writes each changed file, then verifies each file by
-reading it back. If any write or verification fails, it restores every file
-written in that run from its backup and exits with an error. If nothing needs
-to change, no files are written and no backups are created.
+reading it back. If any write or verification fails, it restores every existing
+file written in that run from its backup and deletes any file it created (a
+created file has no source backup). If nothing needs to change, no files are
+written and no backups are created.
 
 `verify` is read-only. It reports the effective trigger and retention, any
 warnings, and whether the targeted keys match the policy.
@@ -235,16 +242,19 @@ warnings, and whether the targeted keys match the policy.
 `restore --latest` finds the newest backup for each selected agent (detected
 agents by default).
 `restore --file <path>` restores one explicit `.bak-agent-compact-*` backup.
-Before restoring, it creates a safety backup of the current file:
+Before restoring an existing target, it creates a safety backup of the current
+file:
 
 ```text
 <file>.bak-agent-compact-before-restore-YYYYMMDD-HHmmss
 ```
 
-with the same numeric-suffix collision handling. Restoration writes the exact
-bytes from the chosen backup. Restore is performed per backup and per file,
-sequentially; it is not an atomic multi-file transaction. The safety backup
-makes each restore reversible.
+with the same numeric-suffix collision handling. If the target is missing, it
+is recreated from the backup and no safety backup is created. Restoration
+writes the exact bytes from the chosen backup. Restore is performed per backup
+and per file, sequentially; it is not an atomic multi-file transaction. A
+safety backup makes each existing-file restore reversible; a recreated missing
+file can be removed if needed.
 
 ## 7. Manual template for OpenCode JSONC
 
@@ -269,6 +279,11 @@ apply it. Edit the file yourself using this template:
 If both `opencode.json` and `opencode.jsonc` exist, `apply` writes
 `opencode.json` and warns that the JSONC file may override the values. The
 tool does not modify the JSONC file in either case.
+
+DSH also returns a manual plan when its YAML uses flow-style collections or
+another structure the safe editor refuses to rewrite. Use
+`print --agent dsh` for the canonical `compaction-basic` block and merge it
+into the profile's `cordis.patch.yml` by hand.
 
 ## 8. Limitations
 
@@ -297,8 +312,9 @@ tool does not modify the JSONC file in either case.
    warn/auto/hard compaction ladder. `verify` reports the configured target,
    not a hard runtime guarantee. Gemini's legacy key is handled with a
    migration warning, and Qwen's retired key is ignored by Qwen itself.
-6. **JSONC comments are never rewritten.** Only an OpenCode `.jsonc` file is
-   detected as manual-only. Apply the printed template yourself.
+6. **Some files are manual-only.** OpenCode `.jsonc` comments are never
+   rewritten, and DSH YAML with flow-style or ambiguous structures is not edited
+   automatically. Apply the printed template yourself.
 7. **Codex profile overrides are not modified.** Top-level keys are written;
    same-named keys in `[profiles.*]` or other tables may take precedence. The
    plan warns when they are present.
@@ -321,9 +337,10 @@ node --test
 node bin/agent-compact.mjs --help
 ```
 
-The test suite uses temporary home directories and never writes to real user
-configurations. Continuous integration runs `node --test` and the help command
-on Ubuntu, Windows, and macOS with Node.js 20, 22, and 24.
+The test suite isolates the home directory and per-agent root environment
+variables, and never writes to real user configurations. Continuous integration
+runs `node --test` and the help command on Ubuntu, Windows, and macOS with
+Node.js 20, 22, and 24.
 
 ## 10. License
 

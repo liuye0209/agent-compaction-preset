@@ -129,6 +129,7 @@ test('help and version are non-destructive', (t) => {
   const help = run(['--help'], home);
   assert.equal(help.status, 0);
   assert.match(help.stdout, /Usage/);
+  assert.match(help.stdout, /95% of context/);
   const version = run(['--version'], home);
   assert.equal(version.status, 0);
   assert.match(version.stdout, /0\.1\.0/);

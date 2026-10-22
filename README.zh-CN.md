@@ -2,7 +2,7 @@
 
 `agent-compaction-preset` 用一套共享策略，为多个命令行编程代理写入原生的上下文压缩设置。它不代理模型请求，不安装运行时插件，也不管理服务商账户或 API 密钥。它只修改目标压缩键，不会打印无关的配置值。它是一个零运行时依赖的 Node.js CLI（要求 Node.js 20 或更高版本），只修改这些代理已经在使用的配置文件。
 
-默认策略面向 200,000 token 的模型窗口，自动压缩触发阈值为 190,000 token，压缩后保留 50,000 token 的原始上下文。OpenCode 和 DSH 可以应用全部三个值。Codex CLI、Claude Code、Gemini CLI 和 Qwen Code 没有用户可配置的保留量设置，因此按部分支持处理：工具会设置它们的触发阈值，并把保留量报告为 `N/A`，而不会假装存在 50K 保留量。
+默认策略面向 200,000 token 的模型窗口，自动压缩触发阈值为 190,000 token，压缩后保留 50,000 token 的原始上下文。OpenCode 和 DSH 可以应用触发阈值和保留量；上下文窗口是用于推导原生设置的输入，不会写入这些文件。Codex CLI、Claude Code、Gemini CLI 和 Qwen Code 没有用户可配置的保留量设置，因此按部分支持处理：工具会设置它们的触发阈值，并把保留量报告为 `N/A`，而不会假装存在 50K 保留量。
 
 ## 1. 能力矩阵
 
@@ -23,7 +23,7 @@
 - 当设置了 `DSH_HOME` 时，DSH 使用 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`，否则使用 `~/.dsh`。
 - 当设置了 `CODEX_HOME` 时，Codex 使用 `$CODEX_HOME/config.toml`。
 - 当设置了 `CLAUDE_CONFIG_DIR` 时，Claude Code 使用 `$CLAUDE_CONFIG_DIR/settings.json`。
-- `--home <path>` 会为所有代理覆盖主目录，环境变量 `AGENT_COMPACT_HOME` 提供相同作用。`--home` 的优先级更高。这主要用于测试和便携使用。
+- `--home <path>` 设置基础主目录；环境变量 `AGENT_COMPACT_HOME` 提供相同作用，且 `--home` 的优先级更高。上面的各代理环境变量仍会覆盖各自的根目录。这主要用于测试和便携使用。
 
 ## 2. 快速开始
 
@@ -69,7 +69,7 @@ node bin/agent-compact.mjs restore --latest --yes
 | `--version` | 打印版本。 |
 | `--help` | 打印帮助。 |
 
-`--trigger` 是绝对 token 数。省略时，默认取 `--context` 的 95% 并向下取整：200,000 窗口为 190,000，100,000 窗口为 95,000。每个代理的原生值会按该窗口重新计算。需要不同的绝对触发阈值时，请显式传入 `--trigger`；例如 `--context 300000 --trigger 280000` 会使用 280,000，而不是 95% 对应的 285,000。`--keep` 除非显式覆盖，否则保持 50,000，并且必须小于触发阈值。
+`--trigger` 是绝对 token 数。省略时，默认取 `--context` 的 95% 并向下取整：200,000 窗口为 190,000，100,000 窗口为 95,000。每个代理的原生值会按该窗口重新计算。需要不同的绝对触发阈值时，请显式传入 `--trigger`；例如 `--context 300000 --trigger 280000` 会使用 280,000，而不是 95% 对应的 285,000。`--keep` 除非显式覆盖，否则保持 50,000，并且必须小于触发阈值。对 DSH 而言，它必须小于 DSH 的有效触发阈值；由于 `maxTokens`/`headroomTokens`，该值可能更低。例如 `--context 100000` 得到 95,000 的触发阈值，但 DSH 有效触发阈值为 91,808，因此 `--keep 94000` 会被拒绝。
 
 退出码：`0` 表示成功或已经配置；`1` 表示错误；`2` 表示没有可操作的代理，或 `--strict` 遇到部分支持。
 
@@ -169,17 +169,17 @@ Qwen Code（`~/.qwen/settings.json`）：
 如果该名称已存在，会追加数字后缀：
 `<file>.bak-agent-compact-YYYYMMDD-HHmmss-1`、`-2`，依此类推。新建文件没有源备份；报告显示 `backup: none`。
 
-`apply` 对所选运行是全员成功或全员回滚。它会先校验每个计划，再备份并写入每个变更文件，然后重新读取验证。任何写入或验证失败时，它会从备份恢复本次运行中已经写入的每个文件，并以错误退出。如果没有任何变更，则不会写入文件，也不会创建备份。
+`apply` 对所选运行是全员成功或全员回滚。它会先校验每个计划，再备份并写入每个变更文件，然后重新读取验证。任何写入或验证失败时，它会从备份恢复本次运行中已经写入的每个现有文件，并删除本次创建的文件（新建文件没有源备份），然后以错误退出。如果没有任何变更，则不会写入文件，也不会创建备份。
 
 `verify` 是只读的。它报告有效触发阈值、保留量、所有警告，以及目标键是否与策略一致。
 
-`restore --latest` 为每个所选代理（默认是已检测到的代理）查找最新备份。`restore --file <path>` 恢复指定的一个 `.bak-agent-compact-*` 备份。恢复前，它会为当前文件创建安全备份：
+`restore --latest` 为每个所选代理（默认是已检测到的代理）查找最新备份。`restore --file <path>` 恢复指定的一个 `.bak-agent-compact-*` 备份。恢复现有目标前，它会为当前文件创建安全备份：
 
 ```text
 <file>.bak-agent-compact-before-restore-YYYYMMDD-HHmmss
 ```
 
-并使用相同的数字后缀冲突处理。恢复会写入所选备份的确切字节。恢复按备份、按文件依次进行，不是多文件原子事务。安全备份使每次恢复都可以撤销。
+并使用相同的数字后缀冲突处理。如果目标不存在，它会从备份重新创建目标，且不会创建安全备份。恢复会写入所选备份的确切字节。恢复按备份、按文件依次进行，不是多文件原子事务。安全备份使每个现有文件的恢复都可以撤销；重新创建的不存在文件如有需要可以删除。
 
 ## 7. OpenCode JSONC 手动模板
 
@@ -200,6 +200,8 @@ Qwen Code（`~/.qwen/settings.json`）：
 
 如果 `opencode.json` 和 `opencode.jsonc` 同时存在，`apply` 会写入 `opencode.json`，并警告 JSONC 文件可能覆盖这些值。两种情况下，工具都不会修改 JSONC 文件。
 
+当 DSH 的 YAML 使用流式集合或安全编辑器拒绝重写的其他结构时，DSH 也会返回手动计划。使用 `print --agent dsh` 获取规范的 `compaction-basic` 块，然后手动合并到 profile 的 `cordis.patch.yml`。
+
 ## 8. 限制
 
 1. **在 200K 模型上使用 250K 触发阈值是不可能的。** 触发阈值必须小于上下文窗口。默认的 190,000 在 200,000 token 模型上留下 10,000 token 余量。
@@ -207,7 +209,7 @@ Qwen Code（`~/.qwen/settings.json`）：
 3. **Claude Code 有最小窗口和版本限制。** `autoCompactWindow` 至少为 100,000 token；低于该值时，工具拒绝写入窗口并说明原因。低于 v2.1.288 的 Claude Code 只支持 `autoCompactEnabled` 布尔值，不支持 `autoCompactWindow`。
 4. **DSH 有摘要输出上限。** 工具写入 `maxTokens: 8192` 和 `headroomTokens: 0`，因为当 headroom 为零时 DSH 要求正的输出上限。有效触发阈值会被该上限降低：`floor(min(context × ratio, context - maxTokens - headroomTokens))`。默认的 200K/0.95 情况正好是 190,000，因为 `200000 - 8192 = 191808`；更大的上限会使有效触发阈值提前。
 5. **Gemini CLI 和 Qwen Code 可能应用内部阶梯或上限。** Gemini 的压缩阈值是目标值，Qwen Code 使用内部 warn/auto/hard 压缩阶梯。`verify` 报告配置的目标值，而不是运行时硬性保证。Gemini 的旧键会被处理并给出迁移警告，Qwen 的已弃用键会被 Qwen 本身忽略。
-6. **JSONC 注释永远不会被自动重写。** 只有 OpenCode 的 `.jsonc` 文件会被识别为仅手动处理。请自行应用打印出的模板。
+6. **部分文件只能手动处理。** OpenCode 的 `.jsonc` 注释永远不会被自动重写，DSH 的流式或歧义 YAML 结构也不会被自动编辑。请自行应用打印出的模板。
 7. **Codex profile 覆盖不会被修改。** 工具写入顶层键；`[profiles.*]` 或其他表中的同名键可能优先。存在这些键时，计划会警告。
 8. **DSH profile 选择可能产生歧义。** 存在多个 profile 时，请传入 `--profile <name>`。重复的 `compaction-basic` 条目会中止；流式 YAML 和歧义结构会回退到手动模板，而不是猜测。
 9. **v0.1.0 不支持：** Cursor、Cline/Roo、Aider、Continue、Copilot CLI 和 IDE 扩展。其中一些没有全局压缩阈值，或者没有基于摘要的压缩设置。
@@ -222,7 +224,7 @@ node --test
 node bin/agent-compact.mjs --help
 ```
 
-测试套件使用临时主目录，永远不会写入真实的用户配置。持续集成在 Ubuntu、Windows 和 macOS 上使用 Node.js 20、22 和 24 运行 `node --test` 和帮助命令。
+测试套件会隔离主目录和各代理的根目录环境变量，永远不会写入真实的用户配置。持续集成在 Ubuntu、Windows 和 macOS 上使用 Node.js 20、22 和 24 运行 `node --test` 和帮助命令。
 
 ## 10. 许可证
 

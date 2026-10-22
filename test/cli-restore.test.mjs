@@ -14,6 +14,7 @@ function makeIO() {
     get out() { return out.join(''); },
     get err() { return err.join(''); },
     isTTY: false,
+    env: {},
   };
 }
 
@@ -37,6 +38,7 @@ test('restore --latest restores exact original bytes', async (t) => {
   const code = await runCli(['restore', '--latest', '--yes', '--agents', 'opencode', '--json', '--home', home], io);
   assert.equal(code, 0, io.err);
   const report = JSON.parse(io.out);
+  assert.equal(report.restored[0].configPath, file);
   assert.deepEqual(fs.readFileSync(file), original);
   assert.match(report.restored[0].safetyBackupPath, /before-restore/);
 });

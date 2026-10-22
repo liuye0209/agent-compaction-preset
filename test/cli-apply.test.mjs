@@ -14,6 +14,7 @@ function makeIO(overrides = {}) {
     get out() { return out.join(''); },
     get err() { return err.join(''); },
     isTTY: false,
+    env: {},
     ...overrides,
   };
 }
@@ -46,6 +47,7 @@ test('apply writes, backs up, verifies, and is idempotent', async (t) => {
   const report = JSON.parse(io.out);
   assert.equal(report.command, 'apply');
   assert.equal(report.applied.length, 1);
+  assert.equal(report.agents[0].configPath, opencode);
   assert.equal(report.agents[0].effective.trigger, 190000);
   assert.equal(report.agents[0].ok, true);
   assert.equal(backupsFor(opencode).length, 1);
